@@ -1,6 +1,7 @@
 import {
   IsNotEmpty,
   IsNumber,
+  IsNumberString,
   IsString,
   ValidateNested,
   IsOptional,
@@ -12,9 +13,9 @@ class ExamGroupEvaluationItemDto {
   @IsNotEmpty()
   answerId: number;
 
-  @IsNumber()
   @IsNotEmpty()
-  marksAwarded: number;
+  @IsNumberString()
+  marksAwarded: string;
 
   @IsString()
   @IsOptional()

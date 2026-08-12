@@ -22,8 +22,12 @@ export class GeminiAiService {
     const parts: any[] = [];
 
     if (fileBuffer) {
-      parts.push({ text: `You are an expert test generator. Based on the attached document, generate ${count} multiple-choice questions. Each question must have exactly 4 options and exactly 1 correct answer.\n\nRespond in JSON array format only:\n[\n  {\n    "questionText": "string",\n    "options": ["option1", "option2", "option3", "option4"],\n    "correctAnswers": ["option2"],\n    "marks": 1\n  }\n]\n\nRules:\n- Only return valid JSON array.\n- Do not include explanations or markdown fences.\n- correctAnswers must contain exactly one option from options.` });
-      parts.push({ inlineData: { mimeType: fileBuffer.mimeType, data: fileBuffer.data } });
+      parts.push({
+        text: `You are an expert test generator. Based on the attached document, generate ${count} multiple-choice questions. Each question must have exactly 4 options and exactly 1 correct answer.\n\nRespond in JSON array format only:\n[\n  {\n    "questionText": "string",\n    "options": ["option1", "option2", "option3", "option4"],\n    "correctAnswers": ["option2"],\n    "marks": 1\n  }\n]\n\nRules:\n- Only return valid JSON array.\n- Do not include explanations or markdown fences.\n- correctAnswers must contain exactly one option from options.`,
+      });
+      parts.push({
+        inlineData: { mimeType: fileBuffer.mimeType, data: fileBuffer.data },
+      });
     } else {
       const prompt = `
 You are an expert test generator. Based on the following content, generate ${count} multiple-choice questions.
@@ -82,8 +86,12 @@ Rules:
     const parts: any[] = [];
 
     if (fileBuffer) {
-      parts.push({ text: `You are an expert test generator. Based on the attached document, generate ${count} creative questions (CQ) and a reference script suitable for spoken assessment.\n\nRespond with exactly this JSON:\n{\n  "referenceScript": "string",\n  "questions": [\n    {\n      "questionText": "string",\n      "correctAnswers": ["model answer phrase"],\n      "marks": 2\n    }\n  ]\n}\n\nRules:\n- referenceScript should be a coherent paragraph a learner can read aloud.\n- questions should ask the learner to speak or write based on the content.\n- Only return valid JSON. Do not include markdown fences or explanations.` });
-      parts.push({ inlineData: { mimeType: fileBuffer.mimeType, data: fileBuffer.data } });
+      parts.push({
+        text: `You are an expert test generator. Based on the attached document, generate ${count} creative questions (CQ) and a reference script suitable for spoken assessment.\n\nRespond with exactly this JSON:\n{\n  "referenceScript": "string",\n  "questions": [\n    {\n      "questionText": "string",\n      "correctAnswers": ["model answer phrase"],\n      "marks": 2\n    }\n  ]\n}\n\nRules:\n- referenceScript should be a coherent paragraph a learner can read aloud.\n- questions should ask the learner to speak or write based on the content.\n- Only return valid JSON. Do not include markdown fences or explanations.`,
+      });
+      parts.push({
+        inlineData: { mimeType: fileBuffer.mimeType, data: fileBuffer.data },
+      });
     } else {
       const prompt = `
 You are an expert test generator. Based on the following content, generate ${count} creative questions (CQ) and a reference script suitable for spoken assessment.
@@ -230,8 +238,12 @@ Do not include markdown fences or explanations.`;
     const parts: any[] = [];
 
     if (fileBuffer) {
-      parts.push({ text: `You are an expert test designer. Based on the attached document, generate a short speaking script that a learner can read aloud in front of the camera.\n\nReturn ONLY the script text. No markdown fences, no JSON, no headings. Just the script paragraph(s) suitable for a 60-90 second video response.` });
-      parts.push({ inlineData: { mimeType: fileBuffer.mimeType, data: fileBuffer.data } });
+      parts.push({
+        text: `You are an expert test designer. Based on the attached document, generate a short speaking script that a learner can read aloud in front of the camera.\n\nReturn ONLY the script text. No markdown fences, no JSON, no headings. Just the script paragraph(s) suitable for a 60-90 second video response.`,
+      });
+      parts.push({
+        inlineData: { mimeType: fileBuffer.mimeType, data: fileBuffer.data },
+      });
     } else {
       const prompt = `
 You are an expert test designer. Based on the following content, generate a short speaking script that a learner can read aloud in front of the camera.

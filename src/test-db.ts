@@ -15,15 +15,14 @@ async function run() {
 
     // Check schema
     const q1 = `
-      SELECT category.id AS "categoryId", category.name AS "categoryName", 
-             COUNT(DISTINCT course.id) AS "coursesCount", 
-             COUNT(enrollment.id) AS "totalEnrolled", 
-             COALESCE(AVG(enrollment.progress), 0) AS "averageProgress" 
-      FROM "categories" "category" 
-      LEFT JOIN "courses" "course" ON "course"."categoryId"="category"."id" 
-      LEFT JOIN "enrollments" "enrollment" ON "enrollment"."courseId"="course"."id" 
-      GROUP BY category.id 
-      ORDER BY "averageProgress" DESC 
+      SELECT eg.id AS "examGroupId", eg.title, eg.status,
+             COUNT(DISTINCT q.id) AS "totalQuestions",
+             COUNT(DISTINCT e.id) AS "totalEnrolled"
+      FROM "exam_groups" eg
+      LEFT JOIN "exam_group_questions" q ON q."examGroupId" = eg.id
+      LEFT JOIN "exam_group_enrollments" e ON e."examGroupId" = eg.id
+      GROUP BY eg.id
+      ORDER BY eg.id DESC
       LIMIT 6 OFFSET 0
     `;
     console.log(await AppDataSource.query(q1));

@@ -47,7 +47,7 @@ export class ExamGroupsController {
         'Only admin or employee can create exam groups',
       );
     }
-    return this.examGroupsService.createExamGroup(createDto);
+    return this.examGroupsService.createExamGroup(createDto, req.user.userId);
   }
 
   @Get()
@@ -58,6 +58,8 @@ export class ExamGroupsController {
     @Query('limit') limit: number = 10,
     @Query('q') q?: string,
     @Query('status') status?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
     const { userId, role } = req.user;
     return this.examGroupsService.getExamGroupsPaginated(
@@ -67,6 +69,22 @@ export class ExamGroupsController {
       status,
       role,
       userId,
+      startDate,
+      endDate,
+    );
+  }
+
+  @Get('trash')
+  @UseGuards(JwtAuthGuard)
+  async getTrash(
+    @Req() req: any,
+    @Query('q') q?: string,
+    @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+  ) {
+    return this.examGroupsService.getTrashItems(
+      req.user.userId,
+      q,
+      sortOrder || 'DESC',
     );
   }
 
@@ -90,7 +108,40 @@ export class ExamGroupsController {
         'Only admin or employee can update exam groups',
       );
     }
-    return this.examGroupsService.updateExamGroup(+id, updateDto);
+    return this.examGroupsService.updateExamGroup(+id, updateDto, req.user.userId);
+  }
+
+  @Post(':id/restore')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async restoreExamGroup(@Param('id') id: string, @Req() req: any) {
+    const { role } = req.user;
+    if (role !== 'admin' && role !== 'employee') {
+      throw new ForbiddenException(
+        'Only admin or employee can restore exam groups',
+      );
+    }
+    return this.examGroupsService.restoreExamGroup(+id, req.user.userId);
+  }
+
+  @Delete('trash/empty')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async emptyRecycleBin(@Req() req: any) {
+    return this.examGroupsService.emptyRecycleBin(req.user.userId);
+  }
+
+  @Delete(':id/permanent')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async permanentlyDeleteExamGroup(@Param('id') id: string, @Req() req: any) {
+    const { role } = req.user;
+    if (role !== 'admin' && role !== 'employee') {
+      throw new ForbiddenException(
+        'Only admin or employee can permanently delete exam groups',
+      );
+    }
+    return this.examGroupsService.permanentlyDeleteExamGroup(+id, req.user.userId);
   }
 
   @Delete(':id')
@@ -103,7 +154,7 @@ export class ExamGroupsController {
         'Only admin or employee can delete exam groups',
       );
     }
-    return this.examGroupsService.deleteExamGroup(+id);
+    return this.examGroupsService.deleteExamGroup(+id, req.user.userId);
   }
 
   @Post(':id/questions')
@@ -255,6 +306,41 @@ export class ExamGroupsController {
     return this.examGroupsService.getRemainingCount(+id);
   }
 
+  @Post('upload-test-video')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads/test-videos',
+        filename: (req: any, file: any, cb: any) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, `${uniqueSuffix}${extname(file.originalname)}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (
+          file.mimetype.match(/\/(mp4|mpeg|quicktime|webm|ogg)$/) ||
+          file.originalname.match(/\.(mp4|mov|avi|webm|ogg)$/i)
+        ) {
+          cb(null, true);
+        } else {
+          cb(new BadRequestException('Only video files are allowed.'), false);
+        }
+      },
+    }),
+  )
+  async uploadTestVideo(@UploadedFile() file: any) {
+    if (!file) {
+      throw new BadRequestException('Video file is required');
+    }
+    return {
+      url: `/uploads/test-videos/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+    };
+  }
+
   @Post('upload-thumbnail')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(
@@ -293,6 +379,52 @@ export class ExamGroupsController {
     }
     return {
       url: `/uploads/exam_thumbnail/${file.filename}`,
+      filename: file.filename,
+      originalName: file.originalname,
+      size: file.size,
+    };
+  }
+
+  @Post('upload-reference-doc')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads/reference-docs',
+        filename: (req: any, file: any, cb: any) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, `${uniqueSuffix}${extname(file.originalname)}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (
+          file.mimetype.match(/\/(pdf|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.presentationml\.presentation)$/)
+        ) {
+          cb(null, true);
+        } else {
+          cb(
+            new BadRequestException(
+              'Only PDF, DOC, DOCX, PPT, and PPTX files are allowed.',
+            ),
+            false,
+          );
+        }
+      },
+    }),
+  )
+  async uploadReferenceDoc(@UploadedFile() file: any, @Req() req: any) {
+    const { role } = req.user;
+    if (role !== 'admin' && role !== 'employee') {
+      throw new ForbiddenException(
+        'Only admin and employee users can upload reference documents.',
+      );
+    }
+    if (!file) {
+      throw new BadRequestException('Document file is required');
+    }
+    return {
+      url: `/uploads/reference-docs/${file.filename}`,
       filename: file.filename,
       originalName: file.originalname,
       size: file.size,

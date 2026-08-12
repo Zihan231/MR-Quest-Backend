@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
+import { Repository, ILike, In } from 'typeorm';
 import { User } from './entities/user.entity';
 import * as bcrypt from 'bcrypt';
 import { RegisterDto } from './dto/register.dto';
@@ -19,6 +19,62 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import * as fs from 'fs';
 import { join } from 'path';
+import { ExamGroupSubmission } from '../exam-groups/entities/exam-group-submission.entity';
+import { ExamGroupAnswer } from '../exam-groups/entities/exam-group-answer.entity';
+import { ExamGroupQuestion } from '../exam-groups/entities/exam-group-question.entity';
+import { ExamGroup } from '../exam-groups/entities/exam-group.entity';
+
+export interface UserListFilters {
+  page: number;
+  limit: number;
+  division?: string;
+  district?: string;
+  upazila?: string;
+  role?: string;
+  q?: string;
+  minTotalMarks?: number;
+  maxTotalMarks?: number;
+  minAvg?: number;
+  maxAvg?: number;
+  activeWithinDays?: number;
+  examGroupId?: number;
+  performanceLevel?: string;
+  sortBy?: 'marks' | 'name' | 'date';
+  order?: 'ASC' | 'DESC';
+}
+
+export interface UserRow {
+  id: number;
+  userId: string;
+  email: string;
+  name: string;
+  role: string;
+  phoneNumber: string | null;
+  address: string | null;
+  division: string | null;
+  district: string | null;
+  upazila: string | null;
+  profilePictureUrl: string | null;
+  createdAt: Date;
+  totalExams: number;
+  totalMarks: number;
+  avgScore: number;
+  bestScore: number;
+  performanceLevel: string | null;
+  lastActiveAt: Date | null;
+  rank: number;
+}
+
+export interface UserExamRecord {
+  submissionId: number;
+  examGroupId: number;
+  examTitle: string;
+  marksObtained: number;
+  totalMarks: number;
+  scorePercent: number;
+  status: string;
+  submittedAt: Date;
+}
 
 @Injectable()
 export class AuthService {
@@ -27,6 +83,14 @@ export class AuthService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(ExamGroupSubmission)
+    private readonly submissionRepository: Repository<ExamGroupSubmission>,
+    @InjectRepository(ExamGroupAnswer)
+    private readonly answerRepository: Repository<ExamGroupAnswer>,
+    @InjectRepository(ExamGroupQuestion)
+    private readonly questionRepository: Repository<ExamGroupQuestion>,
+    @InjectRepository(ExamGroup)
+    private readonly examGroupRepository: Repository<ExamGroup>,
     private readonly jwtService: JwtService,
     private readonly activityLogsService: ActivityLogsService,
   ) {}
@@ -111,6 +175,10 @@ export class AuthService {
         role: true,
         phoneNumber: true,
         address: true,
+        division: true,
+        district: true,
+        upazila: true,
+        profilePictureUrl: true,
       }, // Explicitly fetch password
     });
     if (!user) {
@@ -131,26 +199,6 @@ export class AuthService {
     return { user: result, token };
   }
 
-  async logLogout(token: string): Promise<void> {
-    try {
-      const payload = this.jwtService.verify(token);
-      const userId = payload?.userId;
-      if (!userId) return;
-      const actor = await this.userRepository.findOne({ where: { userId } });
-      await this.activityLogsService.log({
-        actorId: userId,
-        actorName: actor?.name || userId,
-        actorRole: actor?.role || 'unknown',
-        action: 'USER_LOGOUT',
-        targetType: 'User',
-        targetName: actor?.name || userId,
-        targetId: userId,
-      });
-    } catch (err: any) {
-      this.logger.warn(`[ActivityLog] Logout log skipped: ${err?.message}`);
-    }
-  }
-
   async resetPassword(
     userId: string,
     currentPassword: string,
@@ -167,7 +215,10 @@ export class AuthService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    const isPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password,
+    );
     if (!isPasswordValid) {
       throw new UnauthorizedException('Current password is incorrect');
     }
@@ -341,34 +392,460 @@ export class AuthService {
   async getUsersPaginated(
     page: number = 1,
     limit: number = 10,
-  ): Promise<{ data: Omit<User, 'password'>[]; meta: any }> {
-    const skippedItems = (page - 1) * limit;
-
-    const [users, total] = await Promise.all([
-      this.userRepository.find({
-        skip: skippedItems,
-        take: limit,
-        order: {
-          id: 'ASC',
-        },
-      }),
-      this.userRepository.count(),
-    ]);
-
-    const data = users.map(
-      ({ password, ...userWithoutPassword }) => userWithoutPassword,
-    );
-    const totalPages = Math.ceil(total / limit);
+    filters: Partial<UserListFilters> = {},
+  ): Promise<{ data: UserRow[]; meta: any }> {
+    const rows = await this.buildUserRows(filters);
+    const total = rows.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const currentPage = Math.min(Math.max(page, 1), totalPages);
+    const skippedItems = (currentPage - 1) * limit;
 
     return {
-      data,
+      data: rows.slice(skippedItems, skippedItems + limit),
       meta: {
         totalItems: total,
-        itemCount: data.length,
+        itemCount: rows.slice(skippedItems, skippedItems + limit).length,
         itemsPerPage: limit,
         totalPages,
-        currentPage: page,
+        currentPage,
       },
     };
+  }
+
+  async exportUsersCsv(
+    filters: Partial<UserListFilters>,
+  ): Promise<{ csv: string; count: number }> {
+    const rows = await this.buildUserRows(filters);
+    const headers = [
+      'userId',
+      'name',
+      'email',
+      'phoneNumber',
+      'role',
+      'division',
+      'district',
+      'upazila',
+      'totalExams',
+      'totalMarks',
+      'avgScore',
+      'bestScore',
+      'performanceLevel',
+      'joinedAt',
+      'lastActiveAt',
+    ];
+
+    const escapeCsv = (value: any): string => {
+      const str = value === null || value === undefined ? '' : String(value);
+      if (/[",\n]/.test(str)) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const lines = [
+      headers.join(','),
+      ...rows.map((row) =>
+        [
+          row.userId,
+          row.name,
+          row.email,
+          row.phoneNumber,
+          row.role,
+          row.division,
+          row.district,
+          row.upazila,
+          row.totalExams,
+          row.totalMarks,
+          row.avgScore,
+          row.bestScore,
+          row.performanceLevel,
+          row.createdAt,
+          row.lastActiveAt,
+        ]
+          .map(escapeCsv)
+          .join(','),
+      ),
+    ];
+
+    return { csv: lines.join('\n'), count: rows.length };
+  }
+
+  async getUserPerformance(userId: string): Promise<{
+    profile: Omit<User, 'password'>;
+    overall: {
+      totalExams: number;
+      totalMarks: number;
+      avgScore: number;
+      bestScore: number;
+      performanceLevel: string | null;
+    };
+    examHistory: (UserExamRecord & {
+      rank: number;
+      totalParticipants: number;
+    })[];
+    weaknessAnalysis: {
+      totalPossible: number;
+      totalAwarded: number;
+      overallPercent: number;
+      breakdown: {
+        type: string;
+        questionCount: number;
+        maxMarks: number;
+        awardedMarks: number;
+        percent: number;
+      }[];
+      video: {
+        accuracy: { max: number; awarded: number; percent: number };
+      } | null;
+    };
+    trend: {
+      date: Date;
+      examTitle: string;
+      scorePercent: number;
+      marks: number;
+    }[];
+  }> {
+    const user = await this.userRepository.findOne({ where: { userId } });
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+    const { password, ...profile } = user;
+
+    const submissions = await this.submissionRepository.find({
+      where: { user: { id: user.id } },
+      relations: {
+        examGroup: { questions: true },
+        answers: { question: true },
+      },
+      order: { submittedAt: 'ASC' },
+    });
+
+    const records: UserExamRecord[] = [];
+    for (const sub of submissions) {
+      const totalMarks = (sub.examGroup?.questions || []).reduce(
+        (sum, q) => sum + (q.marks || 0),
+        0,
+      );
+      records.push({
+        submissionId: sub.id,
+        examGroupId: sub.examGroup?.id,
+        examTitle: sub.examGroup?.title || 'Unknown exam',
+        marksObtained: sub.marksObtained,
+        totalMarks,
+        scorePercent:
+          totalMarks > 0
+            ? Math.round((sub.marksObtained / totalMarks) * 1000) / 10
+            : 0,
+        status: sub.status,
+        submittedAt: sub.submittedAt || sub.createdAt,
+      });
+    }
+
+    const overall = this.computeOverallStats(records);
+
+    // Rank in each exam: count how many participants scored more
+    const examHistory: (UserExamRecord & {
+      rank: number;
+      totalParticipants: number;
+    })[] = [];
+    for (const record of records) {
+      const allSubs = await this.submissionRepository.find({
+        where: { examGroup: { id: record.examGroupId } },
+        relations: { user: true },
+      });
+      const sorted = allSubs
+        .filter((s) => s.user)
+        .sort((a, b) => b.marksObtained - a.marksObtained);
+      const totalParticipants = sorted.length;
+      const foundIndex = sorted.findIndex((s) => s.user.id === user.id);
+      const rank = foundIndex >= 0 ? foundIndex + 1 : sorted.length + 1;
+      examHistory.push({ ...record, rank, totalParticipants });
+    }
+
+    const weaknessAnalysis = this.computeWeaknessAnalysis(submissions);
+
+    const trend = records.map((r) => ({
+      date: r.submittedAt,
+      examTitle: r.examTitle,
+      scorePercent: r.scorePercent,
+      marks: r.marksObtained,
+    }));
+
+    return { profile, overall, examHistory, weaknessAnalysis, trend };
+  }
+
+  private computeOverallStats(records: UserExamRecord[]) {
+    if (records.length === 0) {
+      return {
+        totalExams: 0,
+        totalMarks: 0,
+        avgScore: 0,
+        bestScore: 0,
+        performanceLevel: null,
+      };
+    }
+    const totalMarks = records.reduce((sum, r) => sum + r.marksObtained, 0);
+    const avgScore =
+      records.reduce((sum, r) => sum + r.scorePercent, 0) / records.length;
+    const bestScore = Math.max(...records.map((r) => r.scorePercent));
+    return {
+      totalExams: records.length,
+      totalMarks,
+      avgScore: Math.round(avgScore * 10) / 10,
+      bestScore,
+      performanceLevel: this.getPerformanceLevel(avgScore),
+    };
+  }
+
+  private getPerformanceLevel(avgScore: number): string | null {
+    if (avgScore >= 80) return 'good';
+    if (avgScore >= 60) return 'average';
+    if (avgScore >= 40) return 'below-average';
+    return null;
+  }
+
+  private computeWeaknessAnalysis(submissions: ExamGroupSubmission[]) {
+    const breakdownMap = new Map<
+      string,
+      {
+        type: string;
+        questionCount: number;
+        maxMarks: number;
+        awardedMarks: number;
+      }
+    >();
+    const video = {
+      accuracy: { max: 0, awarded: 0 },
+    };
+    let videoCount = 0;
+
+    for (const sub of submissions) {
+      for (const answer of sub.answers || []) {
+        const question = answer.question;
+        if (!question) continue;
+        const type = question.type || 'MCQ';
+        const entry = breakdownMap.get(type) || {
+          type,
+          questionCount: 0,
+          maxMarks: 0,
+          awardedMarks: 0,
+        };
+        entry.questionCount += 1;
+        entry.maxMarks += question.marks || 0;
+        entry.awardedMarks += answer.marksAwarded || 0;
+        breakdownMap.set(type, entry);
+
+        if (type === 'Video') {
+          videoCount += 1;
+          video.accuracy.max += question.accuracyMarks || 0;
+          let parsed: any = null;
+          if (answer.evaluatorComment) {
+            try {
+              parsed = JSON.parse(answer.evaluatorComment);
+            } catch {
+              parsed = null;
+            }
+          }
+          video.accuracy.awarded += parsed?.accuracyScore || 0;
+        }
+      }
+    }
+
+    const breakdown = Array.from(breakdownMap.values()).map((entry) => ({
+      ...entry,
+      percent:
+        entry.maxMarks > 0
+          ? Math.round((entry.awardedMarks / entry.maxMarks) * 1000) / 10
+          : 0,
+    }));
+
+    const totalPossible = breakdown.reduce((sum, b) => sum + b.maxMarks, 0);
+    const totalAwarded = breakdown.reduce((sum, b) => sum + b.awardedMarks, 0);
+
+    return {
+      totalPossible,
+      totalAwarded,
+      overallPercent:
+        totalPossible > 0
+          ? Math.round((totalAwarded / totalPossible) * 1000) / 10
+          : 0,
+      breakdown,
+      video:
+        videoCount > 0
+          ? {
+              accuracy: {
+                ...video.accuracy,
+                percent:
+                  video.accuracy.max > 0
+                    ? Math.round(
+                        (video.accuracy.awarded / video.accuracy.max) * 1000,
+                      ) / 10
+                    : 0,
+              },
+            }
+          : null,
+    };
+  }
+
+  private async buildUserRows(
+    filters: Partial<UserListFilters>,
+  ): Promise<UserRow[]> {
+    const {
+      division,
+      district,
+      upazila,
+      role,
+      q,
+      minTotalMarks,
+      maxTotalMarks,
+      minAvg,
+      maxAvg,
+      activeWithinDays,
+      examGroupId,
+      performanceLevel,
+      sortBy = 'date',
+      order = 'DESC',
+    } = filters;
+
+    const where: any = {};
+    if (division) where.division = division;
+    if (district) where.district = district;
+    if (upazila) where.upazila = upazila;
+    if (role) where.role = role;
+
+    const whereClause = q
+      ? [
+          { ...where, name: ILike(`%${q}%`) },
+          { ...where, email: ILike(`%${q}%`) },
+          { ...where, userId: ILike(`%${q}%`) },
+        ]
+      : where;
+
+    const users = await this.userRepository.find({
+      where: whereClause,
+    });
+
+    if (users.length === 0) return [];
+
+    const userIds = users.map((u) => u.id);
+    const submissions = await this.submissionRepository.find({
+      where: { user: { id: In(userIds) } },
+      relations: { examGroup: { questions: true }, user: true },
+    });
+
+    const grouped = new Map<number, ExamGroupSubmission[]>();
+    for (const sub of submissions) {
+      const uid = sub.user?.id;
+      if (!uid) continue;
+      if (!grouped.has(uid)) grouped.set(uid, []);
+      grouped.get(uid)!.push(sub);
+    }
+
+    const activeThreshold = activeWithinDays
+      ? new Date(Date.now() - activeWithinDays * 24 * 60 * 60 * 1000)
+      : null;
+
+    const rows: UserRow[] = [];
+
+    for (const user of users) {
+      const userSubs = grouped.get(user.id) || [];
+      const records: UserExamRecord[] = userSubs.map((sub) => {
+        const totalMarks = (sub.examGroup?.questions || []).reduce(
+          (sum, q) => sum + (q.marks || 0),
+          0,
+        );
+        return {
+          submissionId: sub.id,
+          examGroupId: sub.examGroup?.id,
+          examTitle: sub.examGroup?.title || '',
+          marksObtained: sub.marksObtained,
+          totalMarks,
+          scorePercent:
+            totalMarks > 0
+              ? Math.round((sub.marksObtained / totalMarks) * 1000) / 10
+              : 0,
+          status: sub.status,
+          submittedAt: sub.submittedAt || sub.createdAt,
+        };
+      });
+
+      const overall = this.computeOverallStats(records);
+
+      if (minTotalMarks !== undefined && overall.totalMarks < minTotalMarks)
+        continue;
+      if (maxTotalMarks !== undefined && overall.totalMarks > maxTotalMarks)
+        continue;
+      if (minAvg !== undefined && overall.avgScore < minAvg) continue;
+      if (maxAvg !== undefined && overall.avgScore > maxAvg) continue;
+      if (
+        performanceLevel &&
+        this.getPerformanceLevel(overall.avgScore) !== performanceLevel
+      )
+        continue;
+      if (examGroupId && !records.some((r) => r.examGroupId === examGroupId))
+        continue;
+      if (
+        activeThreshold &&
+        !records.some((r) => new Date(r.submittedAt) >= activeThreshold)
+      )
+        continue;
+
+      const lastActiveAt =
+        records.length > 0
+          ? new Date(
+              Math.max(
+                ...records.map((r) => new Date(r.submittedAt).getTime()),
+              ),
+            )
+          : null;
+
+      rows.push({
+        id: user.id,
+        userId: user.userId,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        phoneNumber: user.phoneNumber || null,
+        address: user.address || null,
+        division: user.division || null,
+        district: user.district || null,
+        upazila: user.upazila || null,
+        profilePictureUrl: user.profilePictureUrl || null,
+        createdAt: user.createdAt,
+        totalExams: overall.totalExams,
+        totalMarks: overall.totalMarks,
+        avgScore: overall.avgScore,
+        bestScore: overall.bestScore,
+        performanceLevel: overall.performanceLevel,
+        lastActiveAt,
+        rank: 0,
+      });
+    }
+
+    const sortKeyMap: Record<string, (r: UserRow) => number | string> = {
+      marks: (r) => r.totalMarks,
+      name: (r) => r.name.toLowerCase(),
+      date: (r) => new Date(r.createdAt).getTime(),
+    };
+    const getSortKey = sortKeyMap[sortBy] || sortKeyMap.date;
+    const dir = order === 'ASC' ? 1 : -1;
+    rows.sort((a, b) => {
+      const av = getSortKey(a);
+      const bv = getSortKey(b);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+
+    // Rank users by performance (total marks desc, then avg score desc),
+    // independent of the display sort order
+    const byPerformance = [...rows].sort(
+      (a, b) => b.totalMarks - a.totalMarks || b.avgScore - a.avgScore,
+    );
+    byPerformance.forEach((row, index) => {
+      row.rank = index + 1;
+    });
+
+    return rows;
   }
 }

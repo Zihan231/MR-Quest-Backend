@@ -3,43 +3,29 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AiTestingService } from './ai-testing.service';
 import { AiTestsController } from './ai-tests.controller';
 import { AiTestGenerationRequest } from './entities/ai-test-generation-request.entity';
-import { AiVideoTestScript } from './entities/ai-video-test-script.entity';
 import { AiGeneratedQuestion } from './entities/ai-generated-question.entity';
-import { Test } from '../courses/entities/test.entity';
-import { Question } from '../courses/entities/question.entity';
-import { Lesson } from '../courses/entities/lesson.entity';
 import { User } from '../auth/entities/user.entity';
-import { Enrollment } from '../courses/entities/enrollment.entity';
-import { Course } from '../courses/entities/course.entity';
+import { ExamGroup } from '../exam-groups/entities/exam-group.entity';
+import { ExamGroupQuestion } from '../exam-groups/entities/exam-group-question.entity';
 import { DocumentParserService } from './document-parser.service';
 import { GeminiAiService } from './gemini-ai.service';
 import { AuthModule } from '../auth/auth.module';
-import { NotificationsModule } from '../courses/notifications.module';
-import { Notification } from '../courses/entities/notification.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       AiTestGenerationRequest,
-      AiVideoTestScript,
       AiGeneratedQuestion,
-      Test,
-      Question,
-      Lesson,
       User,
-      Enrollment,
-      Course,
-      Notification,
+      ExamGroup,
+      ExamGroupQuestion,
     ]),
     AuthModule,
     NotificationsModule,
   ],
   controllers: [AiTestsController],
-  providers: [
-    AiTestingService,
-    DocumentParserService,
-    GeminiAiService,
-  ],
+  providers: [AiTestingService, DocumentParserService, GeminiAiService],
   exports: [AiTestingService, GeminiAiService],
 })
 export class AiTestingModule {}

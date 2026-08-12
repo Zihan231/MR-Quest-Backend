@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Query,
-  Req,
-  UseGuards,
-  Param,
-} from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ActivityLogsService } from './activity-logs.service';
 
@@ -43,18 +36,5 @@ export class ActivityLogsController {
   @Get('actions')
   async getActions(@Req() req: any) {
     return this.activityLogsService.getActions(req.user.userId);
-  }
-
-  @Get('course/:courseId')
-  async findByCourse(
-    @Req() req: any,
-    @Param('courseId') courseId: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.activityLogsService.findByCourse(req.user.userId, courseId, {
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-    });
   }
 }

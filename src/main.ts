@@ -21,11 +21,20 @@ async function bootstrap() {
 
   // Ensure uploads directories exist
   const uploadDir = join(process.cwd(), 'uploads');
-  const thumbnailsDir = join(uploadDir, 'thumbnails');
   const usersDpDir = join(uploadDir, 'users_dp');
-  const certificatesDir = join(uploadDir, 'certificates');
+  const examThumbnailsDir = join(uploadDir, 'exam_thumbnail');
+  const aiDocumentsDir = join(uploadDir, 'ai-documents');
+  const testVideosDir = join(uploadDir, 'test-videos');
+  const referenceDocsDir = join(uploadDir, 'reference-docs');
 
-  [uploadDir, thumbnailsDir, usersDpDir, certificatesDir].forEach((dir) => {
+  [
+    uploadDir,
+    usersDpDir,
+    examThumbnailsDir,
+    aiDocumentsDir,
+    testVideosDir,
+    referenceDocsDir,
+  ].forEach((dir) => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }

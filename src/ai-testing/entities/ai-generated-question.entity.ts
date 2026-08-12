@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
-import { Question } from '../../courses/entities/question.entity';
+import { ExamGroupQuestion } from '../../exam-groups/entities/exam-group-question.entity';
 import { AiTestGenerationRequest } from './ai-test-generation-request.entity';
 
 @Entity('ai_generated_questions')
@@ -8,7 +8,7 @@ export class AiGeneratedQuestion {
   id: number;
 
   @Column()
-  questionId: number;
+  examGroupQuestionId: number;
 
   @Column()
   generationRequestId: number;

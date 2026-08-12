@@ -1,503 +1,367 @@
-# TrainXcel Backend — Full Project Context
+# MrQuest Backend — Full Project Context
 
-> **Last Updated:** 2026-07-11
-> **Repository:** https://github.com/Zihan231/TrainXcel
-> **Stack:** NestJS · TypeORM · PostgreSQL (Neon DB) · JWT via HTTP-only cookies
+> **Last Updated:** 2026-08-10
+> **Stack:** NestJS · TypeORM · PostgreSQL (Neon DB) · JWT via HTTP-only cookies · Google Vertex AI (Gemini) for AI question generation & evaluation
 
 ---
 
 ## 1. Project Overview
 
-TrainXcel is an enterprise learning management platform (LMS). The backend is a NestJS REST API connected to a PostgreSQL database (hosted on Neon). It handles:
+MrQuest is an **exam-only** enterprise platform. There is **NO course, lesson, or learning-path system** — all course-related code was removed. The backend is a NestJS REST API connected to PostgreSQL (Neon DB). It handles:
 
-- User registration, login, and role management
-- Course creation, lesson management, and enrollment
-- Progress tracking and completion
-- Analytics/dashboard statistics
-- Pagination, filtering, and search for both courses and users
+- User registration, login, and role management (user / employee / admin)
+- Exam creation and management (admin/employee only)
+- Question banks for exams — 3 question types: **MCQ**, **CQ** (creative/written), **Video** test
+- AI question generation from uploaded documents (PDF/DOCX)
+- Student enrollment, participation, and submission
+- **AI evaluation** for Video and CQ questions — admin can pick **AI or Manual** review per question
+- Real-time notifications (Socket.IO), activity logs
 
 ---
 
 ## 2. Tech Stack
 
-| Layer       | Technology                         |
-|-------------|-------------------------------------|
-| Framework   | NestJS (Node.js)                   |
-| Language    | TypeScript                         |
-| ORM         | TypeORM                            |
-| Database    | PostgreSQL via Neon DB             |
-| Auth        | JWT (stored in HTTP-only cookie)   |
-| Validation  | NestJS ValidationPipe + DTOs       |
-
-**Key packages:**
-- @nestjs/jwt, @nestjs/passport, passport-jwt
-- typeorm, pg
-- bcrypt (password hashing)
-- cookie-parser (JWT cookie reading)
-- class-validator, class-transformer (DTO validation)
+| Layer        | Technology                                  |
+|--------------|----------------------------------------------|
+| Framework    | NestJS (Node.js)                            |
+| Language     | TypeScript                                  |
+| ORM          | TypeORM                                     |
+| Database     | PostgreSQL via Neon DB                      |
+| Auth         | JWT (stored in HTTP-only cookie `jwt`)      |
+| AI           | Google Vertex AI (Gemini 3.5 Flash)         |
+| Storage      | Google Cloud Storage (video eval assets)    |
+| Media        | ffmpeg (extract audio/snapshots from video) |
+| Realtime     | Socket.IO (notifications)                   |
+| Validation   | class-validator + class-transformer         |
 
 ---
 
 ## 3. Entry Point (main.ts)
 
-- Runs on PORT from environment (default: 3000)
+- Runs on PORT from env (default: 3000), listens on `0.0.0.0`
+- Sets `process.env.TZ = 'UTC'` to keep DB timestamps timezone-safe
+- Sets `GOOGLE_APPLICATION_CREDENTIALS` to `./google-credentials.json`
+- Ensures upload dirs exist: `uploads/{users_dp, exam_thumbnail, ai-documents, test-videos}`
 - Cookie parser enabled globally
-- CORS enabled for: process.env.FRONTEND_URL, http://localhost:3001, http://localhost:3000
-- ValidationPipe enabled globally with whitelist: true (strips unknown fields) and transform: true
+- CORS enabled for `FRONTEND_URL`, localhost:3000/3001/3002 (credentials: true)
+- Global ValidationPipe with `whitelist: true`, `transform: true`
+- keepAliveTimeout 61000 / headersTimeout 65000
 
 ---
 
 ## 4. Database Configuration (app.module.ts)
 
-- Type: postgres, URL from process.env.DATABASE_URL
-- autoLoadEntities: true, synchronize: true (dev only)
-- SSL: rejectUnauthorized: false (required for Neon DB)
-- Connection Pool: max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000
+- Postgres, URL from `process.env.DATABASE_URL`
+- `autoLoadEntities: true`, `synchronize: true` (dev only)
+- SSL `rejectUnauthorized: false` (Neon)
+- Pool: max 20, idleTimeoutMillis 30000, connectionTimeoutMillis 5000
+- Modules: AuthModule, ExamGroupsModule, AiTestingModule, AiEvaluationModule, ActivityLogsModule, NotificationsModule
 
 ---
 
-## 5. Database Entities
+## 5. Roles
 
-### 5.1 User entity (users table)
-
-| Column       | Type   | Notes                                       |
-|--------------|--------|---------------------------------------------|
-| id           | int PK | Auto-incremented                            |
-| email        | string | Unique                                      |
-| name         | string | Indexed                                     |
-| password     | string | select: false — NEVER fetched by default    |
-| userId       | string | Unique, e.g. TX-0001                        |
-| role         | string | user / employee / admin — Indexed           |
-| phoneNumber  | string | Nullable                                    |
-| address      | string | Nullable                                    |
-| createdAt    | Date   | Auto                                        |
-| updatedAt    | Date   | Auto                                        |
-
-Has OneToMany to Enrollment.
-
-### 5.2 Course entity (courses table)
-
-| Column   | Type   | Notes                                         |
-|----------|--------|-----------------------------------------------|
-| id       | int PK | Auto-incremented                              |
-| name     | string | Indexed                                       |
-| courseId | string | Unique, e.g. CRS-0001                        |
-| enrolled | int    | Count of enrolled users (default: 0)         |
-| status   | string | active / inactive / draft — Indexed          |
-
-- ManyToOne to Category (nullable, SET NULL on delete)
-- OneToMany to Lesson (cascade)
-- OneToMany to Enrollment
-- completionRate is a computed field (not stored, calculated at runtime)
-
-### 5.3 Lesson entity (lessons table)
-
-| Column       | Type   | Notes                          |
-|--------------|--------|--------------------------------|
-| id           | int PK | Auto-incremented               |
-| title        | string | Indexed                        |
-| lessonId     | string | Unique, e.g. LES-0001         |
-| description  | text   | Nullable                       |
-| materialType | string | Video / PDF / PPT              |
-| materialLink | string | URL to material                |
-| status       | string | Active / Draft (default: Draft)|
-
-- ManyToOne to Course (CASCADE delete)
-
-### 5.4 Category entity
-
-| Column | Type   | Notes               |
-|--------|--------|---------------------|
-| id     | int PK | Auto-incremented    |
-| name   | string | Category name       |
-
-- OneToMany to Course
-
-### 5.5 Enrollment entity
-
-Tracks which user is enrolled in which course and their progress.
-- ManyToOne to User
-- ManyToOne to Course
-- Tracks progress (percentage 0-100) and completedAt date
+| Role     | Capabilities                                                                 |
+|----------|------------------------------------------------------------------------------|
+| user     | Default role. Can browse active exams, join, participate, view own results   |
+| employee | Can create/manage exams and questions, evaluate submissions, AI-generation   |
+| admin    | Full access: everything employee can do + role management                    |
 
 ---
 
-## 6. Authentication (/auth)
+## 6. Database Entities
 
-Auth Strategy: JWT stored in HTTP-only cookie named "jwt".
-Cookie config: httpOnly: true, sameSite: lax, maxAge: 1 hour.
-JwtAuthGuard used on protected routes — reads cookie automatically.
+### 6.1 User (`users`)
 
-### Auth Endpoints
+| Column             | Type   | Notes                                 |
+|--------------------|--------|---------------------------------------|
+| id                 | int PK | Auto-incremented                      |
+| email              | string | Unique                                |
+| name               | string | Indexed                               |
+| password           | string | select: false — never fetched by default |
+| userId             | string | Unique, e.g. TX-0001                  |
+| profilePictureUrl  | string | Nullable                              |
+| role               | string | user / employee / admin — Indexed     |
+| phoneNumber        | string | Nullable                              |
+| address            | string | Nullable                              |
+| createdAt/updatedAt| Date   | Auto                                  |
+
+OneToMany to Notification.
+
+### 6.2 ExamGroup (`exam_groups`)
+
+| Column        | Type    | Notes                                  |
+|---------------|---------|----------------------------------------|
+| id            | int PK  |                                        |
+| examGroupId   | string  | Unique, e.g. EXG-0001                  |
+| title         | string  | Indexed                                |
+| description   | text    | Nullable                               |
+| thumbnailUrl  | text    | Nullable                               |
+| status        | string  | draft / active / completed / cancelled — Indexed |
+| startTime     | timestamp | Nullable                              |
+| endTime       | timestamp | Nullable                              |
+| timePerQuestion | int    | Nullable                               |
+| totalStudents | int     | Default 0                              |
+
+OneToMany: questions, enrollments, submissions.
+
+### 6.3 ExamGroupQuestion (`exam_group_questions`)
+
+| Column        | Type   | Notes                                         |
+|---------------|--------|-----------------------------------------------|
+| id            | int PK |                                               |
+| questionText  | text   |                                               |
+| type          | string | **MCQ / CQ / Video**                          |
+| options       | jsonb  | MCQ options                                   |
+| correctAnswers| jsonb  | MCQ correct options (or CQ model answer)      |
+| marks         | float  | Default 1                                     |
+| postureMarks  | float  | Video only — posture component                |
+| voiceMarks    | float  | Video only — voice component                  |
+| accuracyMarks | float  | Video only — content accuracy component       |
+| evaluationType| string | **AI / Manual** — how this question is graded |
+| referenceScript | text | Reference script used for AI grading (CQ/Video) |
+| examGroup     | FK     | CASCADE delete                                |
+
+### 6.4 ExamGroupEnrollment (`exam_group_enrollments`)
+
+User ↔ ExamGroup join. ManyToOne User (CASCADE), ManyToOne ExamGroup (CASCADE).
+
+### 6.5 ExamGroupSubmission (`exam_group_submissions`)
+
+| Column        | Type     | Notes                                        |
+|---------------|----------|----------------------------------------------|
+| id            | int PK   |                                              |
+| marksObtained | float    | Default 0                                    |
+| status        | string   | Pending Evaluation / Evaluated               |
+| user          | FK       | CASCADE                                      |
+| examGroup     | FK       | CASCADE                                      |
+| submittedAt   | timestamp| Nullable                                     |
+
+OneToMany answers (cascade).
+
+### 6.6 ExamGroupAnswer (`exam_group_answers`)
+
+| Column           | Type   | Notes                                      |
+|------------------|--------|--------------------------------------------|
+| id               | int PK |                                            |
+| providedAnswer   | jsonb  | For MCQ: selected options; CQ: text; Video: video URL |
+| marksAwarded     | float  | Default 0                                  |
+| evaluatorComment | text   | AI feedback JSON (video) or text (CQ)      |
+| evaluatedBy      | string | AI / Human                                 |
+| submission       | FK     | CASCADE                                    |
+| question         | FK     | CASCADE                                    |
+
+### 6.7 AI Test Generation (`ai_test_generation_requests`, `ai_generated_questions`)
+
+- `ai_test_generation_requests`: tracks async AI question-generation jobs (pending → processing → completed/failed). Holds examGroupId, sourceDocumentUrl, mcqCount, cqCount, includeVideoTest, status, errorMessage, createdByUserId.
+- `ai_generated_questions`: maps generated ExamGroupQuestion IDs to generation request IDs + modelUsed.
+
+---
+
+## 7. Authentication (/auth)
+
+JWT stored in HTTP-only cookie named `jwt`. Config: httpOnly, secure: true, sameSite: 'none', maxAge 1 hour. JwtAuthGuard reads the cookie automatically.
 
 | Method | Endpoint                   | Auth | Description                              |
 |--------|----------------------------|------|------------------------------------------|
-| POST   | /auth/register             | No   | Register new user (forces default 'user' role), returns JWT cookie |
-| POST   | /auth/login                | No   | Login, returns JWT cookie               |
-| POST   | /auth/logout               | No   | Clears JWT cookie                       |
-| GET    | /auth/profile              | Yes  | Get own profile (from JWT token)        |
-| GET    | /auth/users                | Yes  | List users — paginated (10/page)        |
-| GET    | /auth/users/search         | Yes  | Search users by name/email/userId       |
-| POST   | /auth/users/employee       | Yes  | Create employee user directly (admin only) |
-| GET    | /auth/profile/:userId      | Yes  | Get any user profile by userId          |
-| PATCH  | /auth/users/:userId        | Yes  | Update own profile (requester ID must match, admin can bypass) |
-| PATCH  | /auth/users/:userId/role   | Yes  | Update user role (admin only)           |
+| POST   | /auth/login                | No   | Login, returns JWT cookie                |
+| POST   | /auth/logout               | No   | Clears JWT cookie                        |
+| GET    | /auth/profile              | Yes  | Get own profile                          |
+| GET    | /auth/token                | Yes  | Return raw JWT (for Socket.IO handshake) |
+| GET    | /auth/users                | Yes  | List users — paginated (10/page)         |
+| GET    | /auth/users/search         | Yes  | Search users by name/email/userId        |
+| POST   | /auth/users/employee       | Yes  | Create employee user (admin only)        |
+| GET    | /auth/profile/:userId      | Yes  | Get any user profile                     |
+| PATCH  | /auth/users/:userId        | Yes  | Update profile (self or admin)           |
+| PATCH  | /auth/users/:userId/role   | Yes  | Update user role (admin only)            |
+| PATCH  | /auth/reset-password       | Yes  | Reset own password                       |
+| POST   | /auth/upload-dp            | Yes  | Upload profile picture                   |
 
-### User Roles
-- user — default, cannot create/manage courses
-- employee — can create and manage courses and lessons
-- admin — full access including role management
+### Security Model
 
-### Security Model for Protected Endpoints
-
-All endpoints that require a role check (admin/employee) use the following hardened pattern:
-
-1. JwtAuthGuard validates the cookie and populates req.user = { userId, role }
-2. Controller extracts req.user.userId (never trusts req.user.role or any body field)
-3. Controller passes userId to the service as a separate requesterId parameter
-4. Service queries the DB fresh using that requesterId to get the current role
-5. Role check is performed against the live DB record, not the JWT payload
-
-This prevents:
-- A user sending a spoofed userId in the request body to impersonate another user
-- A stale JWT role being used (e.g., user demoted after login but JWT still says admin)
-- Any injection of admin userId through request body fields
-
-DTOs that previously contained userId (CreateCourseDto, UpdateCourseDto, CreateLessonDto,
-UpdateLessonDto) have had userId removed entirely. The client CANNOT send userId.
+Privileged services re-verify the role from a fresh DB lookup using the requester's `userId` from the JWT (never trusts `req.user.role` or any body field). `userId` is not accepted in DTOs.
 
 ---
 
-## 7. Courses Module (/courses)
+## 8. Exam Groups Module (/exam-groups)
 
-### Course Endpoints
+### Exam CRUD
 
-| Method | Endpoint                        | Auth | Description                              |
-|--------|---------------------------------|------|------------------------------------------|
-| GET    | /courses                        | No   | List courses — paginated + filtered (sorted by recent first) |
-| GET    | /courses/:courseId              | No   | Get single course with full details      |
-| POST   | /courses                        | Yes  | Create a course (admin/employee only)    |
-| PATCH  | /courses/:courseId              | Yes  | Update course details                    |
-| PATCH  | /courses/:courseId/status       | Yes  | Update course status only                |
-| DELETE | /courses/:courseId              | Yes  | Delete a course (admin/employee only)    |
+| Method | Endpoint              | Auth | Description                            |
+|--------|-----------------------|------|----------------------------------------|
+| POST   | /exam-groups          | Yes  | Create exam (admin/employee)           |
+| GET    | /exam-groups          | Yes  | List exams — paginated + search/filter |
+| GET    | /exam-groups/:id      | Yes  | Get exam details (students see limited view unless active + enrolled) |
+| PATCH  | /exam-groups/:id      | Yes  | Update exam (admin/employee)           |
+| DELETE | /exam-groups/:id      | Yes  | Delete exam (admin/employee)           |
 
-### Category Endpoints
+List query params: `page`, `limit` (default 10), `q` (title ILike), `status`.
+Students (`role === 'user'`) only see `status === 'active'` exams.
 
-| Method | Endpoint              | Auth | Description             |
-|--------|-----------------------|------|-------------------------|
-| GET    | /courses/categories   | No   | List all categories     |
-| POST   | /courses/categories   | Yes  | Create a new category   |
+### Questions
 
-### Lesson Endpoints
+| Method | Endpoint                             | Auth | Description                       |
+|--------|--------------------------------------|------|-----------------------------------|
+| POST   | /exam-groups/:id/questions           | Yes  | Add questions (admin/employee)    |
+| PATCH  | /exam-groups/:id/questions/:qid      | Yes  | Update question (admin/employee)  |
+| DELETE | /exam-groups/:id/questions/:qid      | Yes  | Remove question (admin/employee)  |
 
-| Method | Endpoint                               | Auth | Description                     |
-|--------|----------------------------------------|------|---------------------------------|
-| GET    | /courses/:courseId/lessons             | No   | List all lessons for a course   |
-| POST   | /courses/:courseId/lessons             | Yes  | Add lesson to a course          |
-| PATCH  | /courses/:courseId/lessons/:lessonId   | Yes  | Update a lesson                 |
-| DELETE | /courses/:courseId/lessons/:lessonId   | Yes  | Delete a lesson (admin/employee only) |
+Each question supports: type (MCQ/CQ/Video), marks, options/correctAnswers, posture/voice/accuracy marks (video), **evaluationType (AI/Manual)**, referenceScript.
 
-### Enrollment & Progress Endpoints
+### Enrollment / Participation
 
-| Method | Endpoint                                        | Auth | Description                     |
-|--------|-------------------------------------------------|------|---------------------------------|
-| POST   | /courses/:courseId/enroll                       | Yes  | Enroll logged-in user in course |
-| POST   | /courses/:courseId/lessons/:lessonId/complete   | Yes  | Mark a lesson as complete       |
-| GET    | /courses/:courseId/progress/:userId             | No   | Get user progress on a course   |
+| Method | Endpoint                 | Auth | Description                              |
+|--------|--------------------------|------|------------------------------------------|
+| POST   | /exam-groups/:id/enroll  | Yes  | Admin adds a user to the exam            |
+| DELETE | /exam-groups/:id/enroll/:userId | Yes | Admin removes a user                |
+| POST   | /exam-groups/:id/join    | Yes  | Student self-joins (must be active, within time window) |
+| POST   | /exam-groups/:id/submit  | Yes  | Student submits answers (one attempt)    |
+| GET    | /exam-groups/:id/my-submissions | Yes | Student's own submissions          |
+| GET    | /exam-groups/:id/submissions | Yes | All submissions (admin/employee)    |
+| GET    | /exam-groups/:id/remaining | Yes | Enrolled/submitted/remaining counts (admin/employee) |
+| PUT    | /exam-groups/:id/evaluations | Yes | Manual evaluation of a submission (admin/employee) |
 
-### Recycle Bin (Trash) Endpoints
+### Uploads
 
-All trash/recycle bin endpoints require roles: `admin` or `employee`.
-
-| Method | Endpoint                                    | Auth | Description                                                |
-|--------|---------------------------------------------|------|------------------------------------------------------------|
-| GET    | /courses/trash                              | Yes  | Search & filter soft-deleted items (courses/lessons)        |
-| DELETE | /courses/trash/empty                        | Yes  | Permanently empty all items from the bin                   |
-| PATCH  | /courses/:courseId/restore                  | Yes  | Restore soft-deleted course                                |
-| PATCH  | /courses/:courseId/lessons/:lessonId/restore| Yes  | Restore soft-deleted lesson                                |
-| DELETE | /courses/:courseId/permanent                | Yes  | Permanently hard-delete course                             |
-| DELETE | /courses/:courseId/lessons/:lessonId/permanent| Yes| Permanently hard-delete lesson                             |
-
-### Search Endpoints
-
-| Method | Endpoint                  | Auth | Description                                       |
-|--------|---------------------------|------|---------------------------------------------------|
-| GET    | /courses/search           | No   | Search courses by name/courseId (case-insensitive)|
-| GET    | /courses/search/unified   | No   | Search both courses AND employees                 |
-
-### Statistics Endpoints
-
-| Method | Endpoint                                    | Auth | Description                          |
-|--------|---------------------------------------------|------|--------------------------------------|
-| GET    | /courses/stats/dashboard                    | No   | Total users, courses, completion rate|
-| GET    | /courses/stats/monthly-progress             | No   | Monthly enrollment/completion trend  |
-| GET    | /courses/stats/course-progress-comparison   | No   | Compare progress across courses      |
-| GET    | /courses/stats/performance                  | No   | Course performance metrics           |
-| GET    | /courses/stats/user-performance             | No   | User-level performance stats         |
-| GET    | /courses/stats/categories                   | No   | Courses grouped by category          |
-| GET    | /courses/stats/materials                    | No   | Materials breakdown (Video/PDF/PPT)  |
-| GET    | /courses/stats/at-risk                      | No   | Users with low progress              |
-| GET    | /courses/stats/recent-activity              | No   | Latest enrollments and completions   |
+| Method | Endpoint                         | Auth | Description                        |
+|--------|----------------------------------|------|------------------------------------|
+| POST   | /exam-groups/upload-test-video   | Yes  | Upload video answer file           |
+| POST   | /exam-groups/upload-thumbnail    | Yes  | Upload exam thumbnail (admin/employee) |
 
 ---
 
-## 8. Unified Course List API (GET /courses)
+## 9. Exam Flow & Evaluation Logic (exam-groups.service.ts)
 
-The PRIMARY frontend endpoint for the course listing page. All query params are optional and composable:
+### Submission (`submitExam`)
+1. One attempt only — duplicate submission is rejected (ConflictException).
+2. Submission rejected if past `endTime`.
+3. Must be enrolled.
+4. Per answer:
+   - **MCQ** → auto-graded against `correctAnswers`, marks added immediately.
+   - **CQ** with `evaluationType === 'AI'` → queued for **AI evaluation** (Gemini text evaluation via `GeminiAiService.evaluateCqAnswer`, using `referenceScript`/`correctAnswers` as reference).
+   - **Video** with `evaluationType === 'AI'` → queued for **AI evaluation** (ffmpeg extracts audio + 20s snapshots, uploads to GCS, `GeminiAnalysisService.evaluateCandidate` scores posture/voice/accuracy).
+   - CQ/Video with `evaluationType !== 'AI'` → left pending for **manual review**.
+5. Submission status starts as `Pending Evaluation` if any answer is non-MCQ, else `Evaluated`.
+6. Asynchronously, each AI evaluation updates the answer's `marksAwarded`, `evaluatorComment`, `evaluatedBy='AI'`, adjusts the submission total, sends a notification, and calls `finalizeSubmissionIfComplete` to flip status to `Evaluated` once no non-MCQ answer remains unevaluated.
 
-| Query Param | Type   | Description                                              |
-|-------------|--------|----------------------------------------------------------|
-| page        | number | Page number (default: 1)                                |
-| limit       | number | Items per page (default: 6)                             |
-| q           | string | Text search (case-insensitive) on name or courseId      |
-| categoryId  | number | Filter by category ID                                   |
-| status      | string | Filter by status: active, inactive, draft               |
-
-Example calls:
-  GET /courses                                           All courses, page 1
-  GET /courses?page=2&limit=6                            Paginate
-  GET /courses?q=git                                     Search
-  GET /courses?categoryId=1&status=active                Filter
-  GET /courses?q=git&categoryId=1&status=active&page=1   Full combo
-
-Response shape:
-{
-  "data": [
-    {
-      "id": 1,
-      "name": "Git & GitHub Basics",
-      "courseId": "CRS-0001",
-      "enrolled": 2,
-      "status": "active",
-      "category": { "id": 1, "name": "Development" },
-      "totalLessons": 4
-    }
-  ],
-  "meta": {
-    "totalItems": 1,
-    "itemCount": 1,
-    "itemsPerPage": 6,
-    "totalPages": 1,
-    "currentPage": 1
-  }
-}
-
-NOTE: totalLessons is computed by fetching only lesson IDs, counting them, then discarding the array.
-Full lesson data is NOT included on the course list page.
+### Manual Evaluation (`evaluateSubmission`)
+- Admin/employee sends a list of `{ answerId, marksAwarded, evaluatorComment? }`.
+- Marks diff is applied to the submission total, `evaluatedBy='Human'`, status set to `Evaluated`, student notified.
 
 ---
 
-## 9. Course Status Update (PATCH /courses/:courseId/status)
+## 10. AI Question Generation (/tests/ai)
 
-- Auth: JWT cookie required. User must be admin or employee.
-- Body: { "status": "active" } — valid values: active, inactive, draft
-- Returns updated course object.
-- 400 Bad Request if status value is invalid.
-- 403 Forbidden if user is not admin/employee.
-- 404 Not Found if course does not exist.
+Admin/employee upload a PDF/DOCX and Gemini generates MCQ/CQ/Video questions directly into an exam group.
 
----
+| Method | Endpoint                  | Auth | Description                              |
+|--------|---------------------------|------|------------------------------------------|
+| POST   | /tests/ai/generate        | Yes  | Start generation (admin/employee)        |
+| GET    | /tests/ai/requests/:id    | Yes  | Get generation request status            |
+| GET    | /tests/ai/requests        | Yes  | List requests (by examGroupId)           |
+| POST   | /tests/ai/upload-document | Yes  | Upload PDF/DOCX source (admin/employee)  |
 
-## 10. Lesson List for a Course (GET /courses/:courseId/lessons)
-
-Returns only lessons for a given course — no enrollment data, no course details, no category.
-Optimized to fetch exactly the fields needed for the lesson view page.
-
-Response shape:
-[
-  {
-    "id": 1,
-    "lessonId": "LES-0001",
-    "title": "Introduction to Version Control",
-    "description": "Understanding Git principles.",
-    "materialType": "Video",
-    "materialLink": "https://example.com/intro.mp4",
-    "status": "Active"
-  }
-]
+- `createAiTest` saves a request, then processes asynchronously (`setImmediate`).
+- `processGenerationJob` reads the uploaded file, calls Gemini to generate MCQs, CQs (with referenceScript), and/or a video script, then inserts `ExamGroupQuestion`s.
+- Uses `GeminiAiService`: `generateMcqs`, `generateCqWithScript`, `generateVideoScript`.
+- On completion, the requesting admin/employee gets a notification.
 
 ---
 
-## 11. DB Optimizations Applied
+## 11. Notifications (/notifications)
 
-11.1 Database Indexes
-  - User: name, role
-  - Course: name, status
-  - Lesson: title
-  These speed up WHERE, ORDER BY, and ILike searches.
-
-11.2 Connection Pooling
-  - max: 20 concurrent connections
-  - idleTimeoutMillis: 30000 (recycles idle connections)
-  - connectionTimeoutMillis: 5000 (fails fast on overload)
-
-11.3 Select-Only Required Fields
-  TypeORM select option is explicitly set on list/search queries so only needed columns
-  are fetched. No unnecessary large text columns or sensitive data are loaded.
-
-11.4 Lesson Count — Never Over-Fetch
-  On course list and search, lessons are NOT fetched in full.
-  Only lesson id is selected, the array is counted, then discarded.
-  Consumer receives totalLessons: number instead of a full array.
-    lessons: { id: true }   <- Only this comes from DB
-    totalLessons: lessons.length   <- Expose count, discard array
-
-11.5 Password Never Fetched
-  password column has select: false in User entity.
-  It is NEVER included in any response unless explicitly queried (only during login).
-
-11.6 Parallel Queries with Promise.all
-  Paginated endpoints use Promise.all([find, count]) to fetch data rows and total count
-  simultaneously instead of sequentially.
-
-11.7 Cascade Deletes
-  - Deleting a course cascades to its lessons (CASCADE on ManyToOne in Lesson)
-  - Deleting a category sets course category to NULL (SET NULL)
+- Socket.IO gateway on `/` with JWT handshake (query token or jwt cookie).
+- `sendNotificationToUser(userId, payload)` emits a `notification` event.
+- Endpoints: GET `/notifications`, PUT `/notifications/read-all`, PUT `/notifications/:id/read`.
 
 ---
 
-## 12. Pagination Design
+## 12. Activity Logs (/activity-logs)
 
-Courses: 6 per page — GET /courses?page=1&limit=6
-Users: 10 per page — GET /auth/users?page=1&limit=10
-Supports filter + search + pagination all at once.
-
-Pagination meta response:
-{
-  "meta": {
-    "totalItems": 42,
-    "itemCount": 6,
-    "itemsPerPage": 6,
-    "totalPages": 7,
-    "currentPage": 1
-  }
-}
+Audit trail (admin only). `ActivityLogsService.log()` is fire-and-forget (never throws).
+- GET `/activity-logs` — paginated/filterable log list (admin only)
+- GET `/activity-logs/actions` — distinct action list (admin only)
 
 ---
 
-## 13. Search Design
+## 13. Uploads (/uploads)
 
-All search uses TypeORM ILike operator (case-insensitive LIKE in PostgreSQL).
-
-Course search (via GET /courses?q=...)
-  - Searches on name OR courseId fields
-  - Can be combined with categoryId and status filters
-  - Returns same paginated response as course list
-  - No full lesson data — only totalLessons count
-
-Unified search (GET /courses/search/unified?q=...)
-  - Searches both courses AND employees simultaneously
-  - Returns { courses: [...], employees: [...] }
-  - courses: lightweight objects with totalLessons
-  - employees: user objects without password
-
-User search (GET /auth/users/search?q=...)
-  - Searches by name, email, or userId
-  - Requires JWT auth
+Serves files from the `uploads/` dir: `/uploads/:folder/:filename` and `/uploads/:filename`.
+Folders: `users_dp`, `exam_thumbnail`, `ai-documents`, `test-videos`.
 
 ---
 
-## 14. ID Generation
+## 14. Environment Variables
 
-Auto-incrementing readable IDs:
-  - Users:   TX-0001, TX-0002, ...
-  - Courses: CRS-0001, CRS-0002, ...
-  - Lessons: LES-0001, LES-0002, ...
-
-Service reads latest existing ID, increments number, zero-pads to 4 digits, prepends prefix.
+| Variable     | Description                              |
+|--------------|------------------------------------------|
+| DATABASE_URL | Neon PostgreSQL connection string        |
+| JWT_SECRET   | Secret for signing JWT tokens            |
+| FRONTEND_URL | Frontend URL (for CORS)                  |
+| PORT         | Server port (default: 3000)              |
 
 ---
 
 ## 15. Project File Structure
 
 src/
-+-- main.ts                          Bootstrap, CORS, cookie, validation
-+-- app.module.ts                    DB config, module wiring
++-- main.ts                            Bootstrap, CORS, cookie, validation
++-- app.module.ts                      DB config, module wiring
++-- app.controller.ts / app.service.ts Health check
++-- uploads.controller.ts              Static upload serving
 +-- auth/
-|   +-- auth.controller.ts           Auth + user management routes
-|   +-- auth.service.ts              Auth business logic
+|   +-- auth.controller.ts             Auth + user management routes
+|   +-- auth.service.ts                Auth business logic
 |   +-- auth.module.ts
-|   +-- jwt-auth.guard.ts            JWT cookie guard
-|   +-- jwt.strategy.ts              Passport JWT strategy
-|   +-- entities/
-|   |   +-- user.entity.ts
-|   +-- dto/
-|       +-- register.dto.ts
-|       +-- login.dto.ts
-|       +-- update-user.dto.ts
-+-- courses/
-    +-- courses.controller.ts        All course/lesson/search/stats routes
-    +-- courses.service.ts           All business logic
-    +-- courses.module.ts
-    +-- trash-cleanup.service.ts     Scheduled deletion service
-    +-- entities/
-    |   +-- course.entity.ts
-    |   +-- lesson.entity.ts
-    |   +-- category.entity.ts
-    |   +-- enrollment.entity.ts
-    +-- dto/
-        +-- create-course.dto.ts
-        +-- update-course.dto.ts
-        +-- create-lesson.dto.ts
-        +-- update-lesson.dto.ts
-        +-- create-category.dto.ts
+|   +-- jwt-auth.guard.ts              JWT cookie guard
+|   +-- entities/user.entity.ts
+|   +-- dto/                           register, login, update-user, create-employee, reset-password
++-- exam-groups/
+|   +-- exam-groups.controller.ts      All exam/participation/evaluation routes
+|   +-- exam-groups.service.ts         Exam business logic (incl. AI eval triggers)
+|   +-- exam-groups.module.ts
+|   +-- entities/                      exam-group, question, enrollment, submission, answer
+|   +-- dto/                           create/update exam-group, add/update question, enroll, submit, evaluate
++-- ai-testing/
+|   +-- ai-tests.controller.ts         AI generation routes
+|   +-- ai-testing.service.ts          Async generation jobs
+|   +-- ai-testing.module.ts
+|   +-- gemini-ai.service.ts           Gemini: generate MCQ/CQ/Video + evaluateCqAnswer
+|   +-- document-parser.service.ts
+|   +-- entities/                      ai-test-generation-request, ai-generated-question
+|   +-- dto/create-ai-test.dto.ts
++-- ai-evaluation/
+|   +-- ai-evaluation.module.ts
+|   +-- gemini-analysis.service.ts     Gemini: multimodal video evaluation (posture/voice/accuracy)
+|   +-- cloud-storage.service.ts       GCS uploads
+|   +-- media-processor.service.ts     ffmpeg audio/snapshot extraction
++-- notifications/
+|   +-- notifications.controller.ts
+|   +-- notifications.gateway.ts       Socket.IO realtime push
+|   +-- notifications.module.ts
+|   +-- notification.entity.ts
++-- activity-logs/
+|   +-- activity-logs.controller.ts
+|   +-- activity-logs.service.ts
+|   +-- activity-logs.module.ts
+|   +-- entities/activity-log.entity.ts
 
 ---
 
-## 16. Environment Variables
+## 16. ID Generation
 
-| Variable      | Description                              |
-|---------------|------------------------------------------|
-| DATABASE_URL  | Neon PostgreSQL connection string        |
-| JWT_SECRET    | Secret for signing JWT tokens            |
-| FRONTEND_URL  | Deployed frontend URL (for CORS)         |
-| PORT          | Server port (default: 3000)              |
+- Users: TX-0001, TX-0002, ...
+- Exam groups: EXG-0001, EXG-0002, ...
+- AI generation requests: AIR-<base36 timestamp>
 
 ---
 
-## 17. Frontend Integration Notes
+## 17. Removed Features (do NOT resurrect)
 
-Frontend project: c:\XR Interactive\trainxcel-frontend
+The following were **completely removed** from the backend:
+- Courses, lessons, categories, enrollments-to-courses
+- Certificates
+- Practice tests, test scheduling, trash/recycle bin, unified search, dashboard stats
+- The old `courses` module and everything under `src/courses/` (moved to `ai-evaluation/` etc.)
 
-- All API calls use credentials: include so browser sends cookie automatically
-- Base URL: http://localhost:3000 (dev) or FRONTEND_URL (prod)
-- Single endpoint rule: GET /courses with query params handles ALL course listing scenarios
-  (listing, filtering by category, filtering by status, searching, paginating)
-- Separate lesson page: course listing uses GET /courses (totalLessons count only),
-  lesson detail page uses GET /courses/:courseId/lessons (full lesson data)
-
----
-
-## 18. Changelog / Everything Built
-
-| #  | Feature / Fix                                                    |
-|----|------------------------------------------------------------------|
-| 1  | Initial NestJS backend setup with TypeORM + Neon DB             |
-| 2  | User auth with register, login, logout via JWT cookie           |
-| 3  | Course CRUD: create, read, update endpoints                     |
-| 4  | Lesson CRUD: add and update lessons per course                  |
-| 5  | Enrollment system: enroll user, mark lesson complete            |
-| 6  | Progress tracking per user per course                           |
-| 7  | Dashboard statistics and analytics endpoints                    |
-| 8  | Course search and unified search (courses + employees)          |
-| 9  | DB optimization: Added @Index() on hot columns                  |
-| 10 | DB optimization: Configured connection pool (max 20)            |
-| 11 | DB optimization: select: false on password column               |
-| 12 | DB optimization: Promise.all for parallel paginated queries     |
-| 13 | Pagination implemented — Courses: 6/page, Users: 10/page       |
-| 14 | Course list optimized — totalLessons count only, no arrays      |
-| 15 | User list optimized — password stripped from all responses      |
-| 16 | All search queries made case-insensitive (ILike)                |
-| 17 | Search and filters unified into GET /courses (single API)       |
-| 18 | GET /courses supports: q, categoryId, status, page, limit       |
-| 19 | PATCH /courses/:courseId/status — dedicated status update       |
-| 20 | GET /courses/:courseId/lessons — optimized lesson list          |
-| 21 | User role update endpoint PATCH /auth/users/:userId/role        |
-| 22 | Unified search optimized — no over-fetching, totalLessons count |
-| 23 | Security: PATCH /auth/users/:userId checks requester ID matches URL userId (admin bypass) |
-| 24 | Security: Removed userId from all DTOs. Role re-verified from DB via requesterId param in all privileged service methods |
-| 25 | Feature: Added DELETE course endpoint (admin/employee only)      |
-| 26 | Feature: Added DELETE lesson endpoint with automatic progress recalculation (admin/employee only) |
-| 27 | Security: Public register defaults to 'user' role; added admin-only POST /auth/users/employee |
-| 28 | Feature: Sorted all course list/search endpoints by recent first (createdAt DESC) |
-| 29 | Feature: Soft-delete Recycle Bin with search/filtering, manual restore, direct hard-delete, empty-bin option, and daily background purge scheduled task (tested with 1-min expiration) |
+**This is now an exam-only platform.**

@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ActivityLog } from './entities/activity-log.entity';
@@ -12,9 +17,10 @@ export interface LogEntry {
   targetType?: string;
   targetName?: string;
   targetId?: string;
-  courseId?: string;
   details?: any;
 }
+
+const IGNORED_ACTIONS = ['USER_LOGOUT'];
 
 @Injectable()
 export class ActivityLogsService {
@@ -36,7 +42,9 @@ export class ActivityLogsService {
       const log = this.logRepo.create(entry);
       await this.logRepo.save(log);
     } catch (err: any) {
-      this.logger.error(`[ActivityLog] Failed to write log entry: ${err?.message}`);
+      this.logger.error(
+        `[ActivityLog] Failed to write log entry: ${err?.message}`,
+      );
     }
   }
 
@@ -50,9 +58,7 @@ export class ActivityLogsService {
       );
     }
     if (requester.role !== 'admin') {
-      throw new ForbiddenException(
-        'Only admin users can view activity logs',
-      );
+      throw new ForbiddenException('Only admin users can view activity logs');
     }
     return requester;
   }
@@ -78,6 +84,9 @@ export class ActivityLogsService {
     const skip = (page - 1) * limit;
 
     const qb = this.logRepo.createQueryBuilder('log');
+    qb.andWhere('log.action NOT IN (:...ignoredActions)', {
+      ignoredActions: IGNORED_ACTIONS,
+    });
 
     if (filters.q) {
       qb.where(
@@ -85,48 +94,21 @@ export class ActivityLogsService {
         { q: `%${filters.q}%` },
       );
     }
-    if (filters.action && !filters.q) qb.andWhere('log.action = :action', { action: filters.action });
-    if (filters.targetType && !filters.q) qb.andWhere('log.targetType = :targetType', { targetType: filters.targetType });
-    if (filters.actorId && !filters.q) qb.andWhere('log.actorId = :actorId', { actorId: filters.actorId });
-    if (filters.from) qb.andWhere('log.createdAt >= :from', { from: new Date(filters.from) });
-    if (filters.to) qb.andWhere('log.createdAt <= :to', { to: new Date(filters.to) });
+    if (filters.action && !filters.q)
+      qb.andWhere('log.action = :action', { action: filters.action });
+    if (filters.targetType && !filters.q)
+      qb.andWhere('log.targetType = :targetType', {
+        targetType: filters.targetType,
+      });
+    if (filters.actorId && !filters.q)
+      qb.andWhere('log.actorId = :actorId', { actorId: filters.actorId });
+    if (filters.from)
+      qb.andWhere('log.createdAt >= :from', { from: new Date(filters.from) });
+    if (filters.to)
+      qb.andWhere('log.createdAt <= :to', { to: new Date(filters.to) });
 
     const sortOrder = filters.sortOrder === 'ASC' ? 'ASC' : 'DESC';
-    qb.orderBy('log.createdAt', sortOrder)
-      .skip(skip)
-      .take(limit);
-
-    const [data, totalItems] = await Promise.all([
-      qb.getMany(),
-      qb.getCount(),
-    ]);
-
-    return {
-      data,
-      meta: {
-        totalItems,
-        itemCount: data.length,
-        itemsPerPage: limit,
-        totalPages: Math.ceil(totalItems / limit),
-        currentPage: page,
-      },
-    };
-  }
-
-  async findByCourse(
-    requesterId: string,
-    courseId: string,
-    filters: { page?: number; limit?: number } = {},
-  ) {
-    await this.assertAdmin(requesterId);
-
-    const page = Number(filters.page) || 1;
-    const limit = Math.min(Number(filters.limit) || 50, 100);
-    const skip = (page - 1) * limit;
-
-    const qb = this.logRepo.createQueryBuilder('log');
-    qb.where('log.courseId = :courseId', { courseId });
-    qb.orderBy('log.createdAt', 'DESC').skip(skip).take(limit);
+    qb.orderBy('log.createdAt', sortOrder).skip(skip).take(limit);
 
     const [data, totalItems] = await Promise.all([qb.getMany(), qb.getCount()]);
 
@@ -147,6 +129,9 @@ export class ActivityLogsService {
     const rows = await this.logRepo
       .createQueryBuilder('log')
       .select('DISTINCT log.action', 'action')
+      .where('log.action NOT IN (:...ignoredActions)', {
+        ignoredActions: IGNORED_ACTIONS,
+      })
       .orderBy('log.action', 'ASC')
       .getRawMany();
     return rows.map((r) => r.action);

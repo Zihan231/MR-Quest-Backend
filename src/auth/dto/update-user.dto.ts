@@ -15,5 +15,17 @@ export class UpdateUserDto {
 
   @IsString()
   @IsOptional()
+  division?: string;
+
+  @IsString()
+  @IsOptional()
+  district?: string;
+
+  @IsString()
+  @IsOptional()
+  upazila?: string;
+
+  @IsString()
+  @IsOptional()
   profilePictureUrl?: string;
 }

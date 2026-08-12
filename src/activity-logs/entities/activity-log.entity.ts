@@ -10,7 +10,6 @@ import {
 @Index(['action'])
 @Index(['targetType'])
 @Index(['targetId'])
-@Index(['courseId'])
 @Index(['createdAt'])
 @Index(['actorId'])
 export class ActivityLog {
@@ -37,9 +36,6 @@ export class ActivityLog {
 
   @Column({ nullable: true })
   targetId: string;
-
-  @Column({ nullable: true })
-  courseId: string;
 
   @Column({ type: 'jsonb', nullable: true })
   details: any;

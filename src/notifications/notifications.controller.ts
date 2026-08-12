@@ -10,7 +10,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Notification } from './entities/notification.entity';
+import { Notification } from './notification.entity';
 import { User } from '../auth/entities/user.entity';
 
 @Controller('notifications')

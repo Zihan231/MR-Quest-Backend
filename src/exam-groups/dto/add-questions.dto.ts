@@ -27,24 +27,26 @@ class QuestionDto {
   @IsOptional()
   correctAnswers?: string[];
 
+  @IsNotEmpty()
   @IsNumber()
+  @Type(() => Number)
   marks: number;
 
   @IsNumber()
-  @IsOptional()
-  postureMarks?: number;
-
-  @IsNumber()
-  @IsOptional()
-  voiceMarks?: number;
-
-  @IsNumber()
+  @Type(() => Number)
   @IsOptional()
   accuracyMarks?: number;
 
   @IsString()
   @IsOptional()
   evaluationType?: string;
+
+  @IsString()
+  @IsOptional()
+  referenceScript?: string;
+
+  @IsOptional()
+  isMultipleAnswer?: boolean;
 }
 
 export class AddQuestionsDto {

@@ -1,10 +1,23 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, UploadedFile, UseInterceptors, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  Req,
+  UploadedFile,
+  UseInterceptors,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { AiTestingService } from './ai-testing.service';
 import { CreateAiTestDto } from './dto/create-ai-test.dto';
-import { CreatePracticeTestDto } from './dto/create-practice-test.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('tests/ai')
@@ -15,7 +28,9 @@ export class AiTestsController {
   @Post('generate')
   @UseGuards(JwtAuthGuard)
   async generateTest(@Body() createDto: CreateAiTestDto, @Req() req: any) {
-    this.logger.log(`generateTest hit by user=${req.user?.userId} role=${req.user?.role} lessonId=${createDto?.lessonId}`);
+    this.logger.log(
+      `generateTest hit by user=${req.user?.userId} role=${req.user?.role} examGroupId=${createDto?.examGroupId}`,
+    );
     const { role } = req.user;
     if (role !== 'admin' && role !== 'employee') {
       this.logger.warn(`Forbidden generateTest role=${role}`);
@@ -23,9 +38,16 @@ export class AiTestsController {
         'Only admin or employee can generate AI tests',
       );
     }
-    this.logger.log(`createAiTest starting for lesson=${createDto?.lessonId}`);
-    const result = await this.aiTestingService.createAiTest(createDto, req.user.userId);
-    this.logger.log(`createAiTest completed requestId=${result?.requestId} status=${result?.status}`);
+    this.logger.log(
+      `createAiTest starting for examGroup=${createDto?.examGroupId}`,
+    );
+    const result = await this.aiTestingService.createAiTest(
+      createDto,
+      req.user.userId,
+    );
+    this.logger.log(
+      `createAiTest completed requestId=${result?.requestId} status=${result?.status}`,
+    );
     return result;
   }
 
@@ -42,20 +64,11 @@ export class AiTestsController {
 
   @Get('requests')
   @UseGuards(JwtAuthGuard)
-  async getGenerationRequests(@Query('lessonId') lessonId: string) {
-    if (!lessonId) {
+  async getGenerationRequests(@Query('examGroupId') examGroupId: string) {
+    if (!examGroupId) {
       return [];
     }
-    return this.aiTestingService.getGenerationRequestsByLesson(+lessonId);
-  }
-
-  @Post('practice/generate')
-  @UseGuards(JwtAuthGuard)
-  async generatePracticeTest(@Body() createDto: CreatePracticeTestDto, @Req() req: any) {
-    this.logger.log(`generatePracticeTest hit by user=${req.user?.userId} role=${req.user?.role} lessonId=${createDto?.lessonId}`);
-    const result = await this.aiTestingService.createPracticeTest(createDto, req.user.userId);
-    this.logger.log(`generatePracticeTest completed requestId=${result?.requestId} status=${result?.status}`);
-    return result;
+    return this.aiTestingService.getGenerationRequestsByExamGroup(+examGroupId);
   }
 
   @Post('upload-document')

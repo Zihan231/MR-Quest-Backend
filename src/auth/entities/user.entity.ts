@@ -7,8 +7,7 @@ import {
   OneToMany,
   Index,
 } from 'typeorm';
-import { Enrollment } from '../../courses/entities/enrollment.entity';
-import { Notification } from '../../courses/entities/notification.entity';
+import { Notification } from '../../notifications/notification.entity';
 
 @Entity('users')
 export class User {
@@ -41,8 +40,16 @@ export class User {
   @Column({ nullable: true })
   address: string;
 
-  @OneToMany(() => Enrollment, (enrollment) => enrollment.user)
-  enrollments: Enrollment[];
+  @Index()
+  @Column({ nullable: true })
+  division: string;
+
+  @Index()
+  @Column({ nullable: true })
+  district: string;
+
+  @Column({ nullable: true })
+  upazila: string;
 
   @OneToMany(() => Notification, (notification) => notification.user)
   notifications: Notification[];

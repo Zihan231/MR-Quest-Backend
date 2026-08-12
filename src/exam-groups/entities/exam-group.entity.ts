@@ -6,6 +6,7 @@ import {
   Index,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
 } from 'typeorm';
 import { ExamGroupQuestion } from './exam-group-question.entity';
 import { ExamGroupEnrollment } from './exam-group-enrollment.entity';
@@ -59,4 +60,7 @@ export class ExamGroup {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @DeleteDateColumn()
+  deletedAt: Date | null;
 }

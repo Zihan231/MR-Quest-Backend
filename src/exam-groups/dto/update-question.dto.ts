@@ -1,4 +1,5 @@
 import { IsString, IsArray, IsNumber, IsOptional } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateQuestionDto {
   @IsString()
@@ -16,6 +17,7 @@ export class UpdateQuestionDto {
   correctAnswers?: string[];
 
   @IsNumber()
+  @Type(() => Number)
   @IsOptional()
   marks?: number;
 
@@ -24,18 +26,18 @@ export class UpdateQuestionDto {
   type?: string;
 
   @IsNumber()
-  @IsOptional()
-  postureMarks?: number;
-
-  @IsNumber()
-  @IsOptional()
-  voiceMarks?: number;
-
-  @IsNumber()
+  @Type(() => Number)
   @IsOptional()
   accuracyMarks?: number;
 
   @IsString()
   @IsOptional()
   evaluationType?: string;
+
+  @IsString()
+  @IsOptional()
+  referenceScript?: string;
+
+  @IsOptional()
+  isMultipleAnswer?: boolean;
 }

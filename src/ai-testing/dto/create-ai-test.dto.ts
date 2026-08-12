@@ -2,7 +2,7 @@ import { IsString, IsNumber, IsBoolean, IsOptional } from 'class-validator';
 
 export class CreateAiTestDto {
   @IsNumber()
-  lessonId: number;
+  examGroupId: number;
 
   @IsNumber()
   mcqCount: number;

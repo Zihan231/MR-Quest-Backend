@@ -5,10 +5,22 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { User } from './entities/user.entity';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { ExamGroup } from '../exam-groups/entities/exam-group.entity';
+import { ExamGroupQuestion } from '../exam-groups/entities/exam-group-question.entity';
+import { ExamGroupEnrollment } from '../exam-groups/entities/exam-group-enrollment.entity';
+import { ExamGroupSubmission } from '../exam-groups/entities/exam-group-submission.entity';
+import { ExamGroupAnswer } from '../exam-groups/entities/exam-group-answer.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([
+      User,
+      ExamGroup,
+      ExamGroupQuestion,
+      ExamGroupEnrollment,
+      ExamGroupSubmission,
+      ExamGroupAnswer,
+    ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -20,6 +32,6 @@ import { AuthController } from './auth.controller';
   ],
   controllers: [AuthController],
   providers: [AuthService],
-  exports: [AuthService, JwtModule],
+  exports: [AuthService, JwtModule, TypeOrmModule],
 })
 export class AuthModule {}

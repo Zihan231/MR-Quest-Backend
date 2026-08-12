@@ -6,8 +6,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { Lesson } from '../../courses/entities/lesson.entity';
-import { Test } from '../../courses/entities/test.entity';
+import { ExamGroup } from '../../exam-groups/entities/exam-group.entity';
 
 @Entity('ai_test_generation_requests')
 export class AiTestGenerationRequest {
@@ -17,11 +16,13 @@ export class AiTestGenerationRequest {
   @Column({ unique: true })
   requestId: string;
 
-  @Column()
-  lessonId: number;
+  @ManyToOne(() => ExamGroup, (examGroup) => examGroup.id, {
+    onDelete: 'CASCADE',
+  })
+  examGroup: ExamGroup;
 
-  @Column({ nullable: true })
-  testId: number;
+  @Column()
+  examGroupId: number;
 
   @Column()
   sourceDocumentUrl: string;
@@ -40,9 +41,6 @@ export class AiTestGenerationRequest {
 
   @Column({ default: 'pending' })
   status: string;
-
-  @Column({ default: false })
-  isPractice: boolean;
 
   @Column({ nullable: true })
   createdByUserId: string;

@@ -5,11 +5,13 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
-import { CoursesModule } from './courses/courses.module';
 import { ExamGroupsModule } from './exam-groups/exam-groups.module';
 import { AiTestingModule } from './ai-testing/ai-testing.module';
+import { AiEvaluationModule } from './ai-evaluation/ai-evaluation.module';
 import { ActivityLogsModule } from './activity-logs/activity-logs.module';
-import { CertificatesModule } from './certificates/certificates.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { RegionsModule } from './regions/regions.module';
+import { MonitoringModule } from './monitoring/monitoring.module';
 
 import { UploadsController } from './uploads.controller';
 
@@ -34,11 +36,13 @@ import { UploadsController } from './uploads.controller';
       },
     }),
     AuthModule,
-    CoursesModule,
     ExamGroupsModule,
     AiTestingModule,
+    AiEvaluationModule,
     ActivityLogsModule,
-    CertificatesModule,
+    NotificationsModule,
+    RegionsModule,
+    MonitoringModule,
   ],
   controllers: [AppController, UploadsController],
   providers: [AppService],

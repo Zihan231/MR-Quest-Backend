@@ -22,16 +22,16 @@ export class ExamGroupQuestion {
   marks: number;
 
   @Column({ type: 'float', nullable: true })
-  postureMarks: number;
-
-  @Column({ type: 'float', nullable: true })
-  voiceMarks: number;
-
-  @Column({ type: 'float', nullable: true })
   accuracyMarks: number;
 
   @Column({ default: 'AI' })
   evaluationType: string;
+
+  @Column({ type: 'text', nullable: true })
+  referenceScript: string;
+
+  @Column({ type: 'boolean', default: false })
+  isMultipleAnswer: boolean;
 
   @ManyToOne(() => ExamGroup, (examGroup) => examGroup.questions, {
     onDelete: 'CASCADE',

@@ -14,6 +14,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -30,6 +31,15 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  private assertAdminOrEmployee(req: any) {
+    const role = req.user?.role;
+    if (role !== 'admin' && role !== 'employee') {
+      throw new ForbiddenException(
+        'Only admin or employee users can access this resource',
+      );
+    }
+  }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -49,15 +59,8 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  async logout(
-    @Res({ passthrough: true }) response: Response,
-    @Req() req: any,
-  ) {
+  async logout(@Res({ passthrough: true }) response: Response) {
     response.clearCookie('jwt');
-    const token = req.cookies?.['jwt'];
-    if (token) {
-      this.authService.logLogout(token).catch(() => {});
-    }
     return { message: 'Logged out successfully' };
   }
 
@@ -93,10 +96,95 @@ export class AuthController {
   @Get('users')
   @UseGuards(JwtAuthGuard)
   async getUsers(
+    @Req() req: any,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
+    @Query('division') division?: string,
+    @Query('district') district?: string,
+    @Query('upazila') upazila?: string,
+    @Query('role') role?: string,
+    @Query('q') q?: string,
+    @Query('minTotalMarks') minTotalMarks?: number,
+    @Query('maxTotalMarks') maxTotalMarks?: number,
+    @Query('minAvg') minAvg?: number,
+    @Query('maxAvg') maxAvg?: number,
+    @Query('activeWithinDays') activeWithinDays?: number,
+    @Query('examGroupId') examGroupId?: number,
+    @Query('performanceLevel') performanceLevel?: string,
+    @Query('sortBy') sortBy?: 'marks' | 'name' | 'date',
+    @Query('order') order?: 'ASC' | 'DESC',
   ) {
-    return this.authService.getUsersPaginated(Number(page), Number(limit));
+    this.assertAdminOrEmployee(req);
+    return this.authService.getUsersPaginated(Number(page), Number(limit), {
+      division,
+      district,
+      upazila,
+      role,
+      q,
+      minTotalMarks:
+        minTotalMarks !== undefined ? Number(minTotalMarks) : undefined,
+      maxTotalMarks:
+        maxTotalMarks !== undefined ? Number(maxTotalMarks) : undefined,
+      minAvg: minAvg !== undefined ? Number(minAvg) : undefined,
+      maxAvg: maxAvg !== undefined ? Number(maxAvg) : undefined,
+      activeWithinDays:
+        activeWithinDays !== undefined ? Number(activeWithinDays) : undefined,
+      examGroupId: examGroupId !== undefined ? Number(examGroupId) : undefined,
+      performanceLevel,
+      sortBy,
+      order,
+    });
+  }
+
+  @Get('users/export')
+  @UseGuards(JwtAuthGuard)
+  async exportUsersCsv(
+    @Req() req: any,
+    @Query('division') division?: string,
+    @Query('district') district?: string,
+    @Query('upazila') upazila?: string,
+    @Query('role') role?: string,
+    @Query('q') q?: string,
+    @Query('minTotalMarks') minTotalMarks?: number,
+    @Query('maxTotalMarks') maxTotalMarks?: number,
+    @Query('minAvg') minAvg?: number,
+    @Query('maxAvg') maxAvg?: number,
+    @Query('activeWithinDays') activeWithinDays?: number,
+    @Query('examGroupId') examGroupId?: number,
+    @Query('performanceLevel') performanceLevel?: string,
+    @Query('sortBy') sortBy?: 'marks' | 'name' | 'date',
+    @Query('order') order?: 'ASC' | 'DESC',
+  ) {
+    this.assertAdminOrEmployee(req);
+    const result = await this.authService.exportUsersCsv({
+      page: 1,
+      limit: 100000,
+      division,
+      district,
+      upazila,
+      role,
+      q,
+      minTotalMarks:
+        minTotalMarks !== undefined ? Number(minTotalMarks) : undefined,
+      maxTotalMarks:
+        maxTotalMarks !== undefined ? Number(maxTotalMarks) : undefined,
+      minAvg: minAvg !== undefined ? Number(minAvg) : undefined,
+      maxAvg: maxAvg !== undefined ? Number(maxAvg) : undefined,
+      activeWithinDays:
+        activeWithinDays !== undefined ? Number(activeWithinDays) : undefined,
+      examGroupId: examGroupId !== undefined ? Number(examGroupId) : undefined,
+      performanceLevel,
+      sortBy,
+      order,
+    });
+    return result;
+  }
+
+  @Get('users/:userId/performance')
+  @UseGuards(JwtAuthGuard)
+  async getUserPerformance(@Param('userId') userId: string, @Req() req: any) {
+    this.assertAdminOrEmployee(req);
+    return this.authService.getUserPerformance(userId);
   }
 
   @Get('users/search')
