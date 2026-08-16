@@ -69,6 +69,26 @@ export class ExamGroupsService {
     }
   }
 
+  private async deleteVideoEvaluationAssets(submissionId: number) {
+    try {
+      const evaluationDir = path.join(
+        process.cwd(),
+        `uploads/VdoEva/submission_${submissionId}`,
+      );
+      if (fs.existsSync(evaluationDir)) {
+        await fs.promises.rm(evaluationDir, {
+          recursive: true,
+          force: true,
+        });
+        console.log(
+          `[File Cleanup] Deleted AI evaluation assets: ${evaluationDir}`,
+        );
+      }
+    } catch (err) {
+      console.error('[File Cleanup] Failed to delete AI evaluation assets:', err);
+    }
+  }
+
   private async deleteExamGroupFiles(examGroup: ExamGroup) {
     try {
       if (examGroup.thumbnailUrl) {
@@ -175,6 +195,40 @@ export class ExamGroupsService {
     }
   }
 
+  private async notifyStudentsAboutNewExam(examGroup: ExamGroup) {
+    try {
+      const students = await this.userRepo.find({
+        where: { role: 'user' },
+      });
+      if (students.length === 0) return;
+
+      const notifications = students.map((student) =>
+        this.notificationRepo.create({
+          message: `New test "${examGroup.title}" is now available. Take it now.`,
+          user: student,
+          actionLink: `/exams/${examGroup.id}`,
+        }),
+      );
+      const saved = await this.notificationRepo.save(notifications);
+
+      for (let i = 0; i < students.length; i++) {
+        const notif = saved[i];
+        if (!notif) continue;
+        this.notificationsGateway.sendNotificationToUser(students[i].userId, {
+          id: notif.id,
+          message: notif.message,
+          actionLink: notif.actionLink,
+          createdAt: notif.createdAt,
+          isRead: false,
+        });
+      }
+    } catch (err: any) {
+      console.error(
+        `[ExamGroup] Failed to notify students about new exam: ${err?.message}`,
+      );
+    }
+  }
+
   async createExamGroup(dto: CreateExamGroupDto, actorId: string): Promise<ExamGroup> {
     const examGroup = this.examGroupRepo.create({});
 
@@ -197,6 +251,10 @@ export class ExamGroupsService {
     }
 
     const saved = await this.examGroupRepo.save(examGroup);
+
+    if (saved.status === 'active') {
+      await this.notifyStudentsAboutNewExam(saved);
+    }
 
     await this.logActivity(
       actorId,
@@ -347,6 +405,7 @@ export class ExamGroupsService {
       throw new NotFoundException('Exam group not found');
     }
 
+    const oldStatus = examGroup.status;
     const changedFields: string[] = [];
 
     if (dto.title !== undefined && dto.title !== examGroup.title) {
@@ -387,6 +446,10 @@ export class ExamGroupsService {
     }
 
     const saved = await this.examGroupRepo.save(examGroup);
+
+    if (oldStatus !== 'active' && saved.status === 'active') {
+      await this.notifyStudentsAboutNewExam(saved);
+    }
 
     // Only log if something actually changed!
     if (changedFields.length > 0) {
@@ -967,11 +1030,14 @@ export class ExamGroupsService {
       await this.sendNotification(
         user,
         `Your evaluation for "${examGroup.title}" is complete. Your final score is ${marksObtained}.`,
-        `/exam-groups/${examGroup.id}/results`,
+        `/results/${examGroup.id}`,
       );
     }
 
     // Trigger AI Evaluation for Video questions
+    const totalVideoAnswers = aiVideoAnswers.length;
+    let completedVideoEvaluations = 0;
+
     for (const aiAnswer of aiVideoAnswers) {
       let filename = aiAnswer.providedArr[0] || '';
       if (filename.includes('/')) {
@@ -1036,6 +1102,23 @@ export class ExamGroupsService {
             }
           } catch (e) {
             console.error('[ExamGroup AI Error]', e);
+            await this.markAiEvaluationFailed(
+              savedSubmission.id,
+              aiAnswer.questionId,
+            );
+          }
+        })
+        .catch(async (e) => {
+          console.error('[ExamGroup AI Media Error]', e);
+          await this.markAiEvaluationFailed(
+            savedSubmission.id,
+            aiAnswer.questionId,
+          );
+        })
+        .finally(async () => {
+          completedVideoEvaluations++;
+          if (completedVideoEvaluations === totalVideoAnswers) {
+            await this.deleteVideoEvaluationAssets(savedSubmission.id);
           }
         });
     }
@@ -1083,8 +1166,12 @@ export class ExamGroupsService {
             await this.finalizeSubmissionIfComplete(savedSubmission.id);
           }
         })
-        .catch((err) => {
+        .catch(async (err) => {
           console.error('[ExamGroup CQ AI Error]', err);
+          await this.markAiEvaluationFailed(
+            savedSubmission.id,
+            aiCqAnswer.questionId,
+          );
         });
     }
 
@@ -1107,6 +1194,9 @@ export class ExamGroupsService {
           (sum, ans) => sum + (ans.marksAwarded || 0),
           0,
         );
+        const studentVisibleTotal = (sub.answers || [])
+          .filter((ans) => ans.question?.type !== 'Video')
+          .reduce((sum, ans) => sum + (ans.marksAwarded || 0), 0);
 
         await this.submissionRepo.update(submissionId, {
           status: 'Evaluated',
@@ -1116,13 +1206,37 @@ export class ExamGroupsService {
         if (sub.user && sub.examGroup) {
           await this.sendNotification(
             sub.user,
-            `Your evaluation for "${sub.examGroup.title}" is complete. Your final score is ${totalMarks}.`,
-            `/exam-groups/${sub.examGroup.id}/results`,
+            `Your evaluation for "${sub.examGroup.title}" is complete. Your final score is ${studentVisibleTotal}.`,
+            `/results/${sub.examGroup.id}`,
           );
         }
       }
     } catch (err: any) {
       console.error('[ExamGroup] finalizeSubmissionIfComplete error:', err);
+    }
+  }
+
+  private async markAiEvaluationFailed(
+    submissionId: number,
+    questionId: number,
+  ) {
+    try {
+      const savedSubAnswer = await this.answerRepo.findOne({
+        where: { submission: { id: submissionId }, question: { id: questionId } },
+      });
+      if (!savedSubAnswer) return;
+
+      await this.answerRepo.update(savedSubAnswer.id, {
+        evaluatedBy: null,
+        marksAwarded: 0,
+        evaluatorComment: '__AI_FAILED__',
+      });
+
+      console.error(
+        `[ExamGroup] AI evaluation failed for submission ${submissionId}, question ${questionId}. Flagged for manual review.`,
+      );
+    } catch (err: any) {
+      console.error('[ExamGroup] markAiEvaluationFailed error:', err);
     }
   }
 
@@ -1194,7 +1308,7 @@ export class ExamGroupsService {
   ): Promise<{ message: string }> {
     const submission = await this.submissionRepo.findOne({
       where: { id: dto.submissionId, examGroup: { id: examGroupId } },
-      relations: { answers: true, user: true },
+      relations: { answers: { question: true }, user: true },
     });
 
     if (!submission) {
@@ -1202,6 +1316,7 @@ export class ExamGroupsService {
     }
 
     let marksAdded = 0;
+    let visibleMarksAdded = 0;
 
     for (const evalItem of dto.evaluations) {
       const answer = await this.answerRepo.findOne({
@@ -1214,13 +1329,20 @@ export class ExamGroupsService {
         const marksAwardedNum = Number(evalItem.marksAwarded);
         const marksDiff = marksAwardedNum - (answer.marksAwarded || 0);
         marksAdded += marksDiff;
+        if (answer.question?.type !== 'Video') {
+          visibleMarksAdded += marksDiff;
+        }
 
         const isUpdate = answer.evaluatedBy === 'Human';
+        const comment =
+          evalItem.evaluatorComment ||
+          (answer.evaluatorComment?.startsWith?.('__AI_FAILED__')
+            ? ''
+            : answer.evaluatorComment);
 
         await this.answerRepo.update(answer.id, {
           marksAwarded: marksAwardedNum,
-          evaluatorComment:
-            evalItem.evaluatorComment || answer.evaluatorComment,
+          evaluatorComment: comment,
           evaluatedBy: 'Human',
         });
 
@@ -1259,10 +1381,14 @@ export class ExamGroupsService {
         where: { id: submission.user.id },
       });
       if (student) {
+        const visibleTotalBase = (submission.answers || [])
+          .filter((ans) => ans.question?.type !== 'Video')
+          .reduce((sum, ans) => sum + (ans.marksAwarded || 0), 0);
+        const visibleTotal = Math.max(0, visibleTotalBase + visibleMarksAdded);
         await this.sendNotification(
           student,
-          `Your marks for "${examGroup.title}" have been updated to ${newTotal}.`,
-          `/exam-groups/${examGroup.id}/results`,
+          `Your marks for "${examGroup.title}" have been updated to ${visibleTotal}.`,
+          `/results/${examGroup.id}`,
         );
       }
     }

@@ -17,7 +17,7 @@ export class ExamGroupAnswer {
   evaluatorComment: string;
 
   @Column({ type: 'varchar', nullable: true })
-  evaluatedBy: string;
+  evaluatedBy: string | null;
 
   @ManyToOne(() => ExamGroupSubmission, (submission) => submission.answers, {
     onDelete: 'CASCADE',

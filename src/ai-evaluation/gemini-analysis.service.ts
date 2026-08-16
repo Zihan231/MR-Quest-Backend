@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 
 import { GoogleGenAI } from '@google/genai';
+import { geminiSemaphore } from '../common/concurrency';
 
 @Injectable()
 export class GeminiAnalysisService {
@@ -24,6 +25,41 @@ export class GeminiAnalysisService {
 
       location: this.location,
     });
+  }
+
+  private pickRepresentativeUris(uris: string[], max = 8): string[] {
+    if (uris.length <= max) return uris;
+    const step = (uris.length - 1) / (max - 1);
+    const picked: string[] = [];
+    for (let i = 0; i < max; i++) {
+      picked.push(uris[Math.round(i * step)]);
+    }
+    return picked;
+  }
+
+  private async callWithRetry(
+    generateContent: () => Promise<any>,
+    attempts = 3,
+  ): Promise<any> {
+    const delays = [1000, 2000, 4000];
+    let lastError: any;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        return await generateContent();
+      } catch (error: any) {
+        lastError = error;
+        const retriable =
+          error?.status === 429 ||
+          error?.status === 500 ||
+          error?.status === 503 ||
+          error?.code === 429;
+        if (!retriable || attempt === attempts - 1) throw error;
+        await new Promise((resolve) =>
+          setTimeout(resolve, delays[attempt] || 1000),
+        );
+      }
+    }
+    throw lastError;
   }
 
   async evaluateCandidate(
@@ -120,13 +156,14 @@ export class GeminiAnalysisService {
     `;
 
     // Map all modalities into the payload: Text + Audio + PDF/Images (DOCX/PPTX passed as text)
+    const cappedSnapshots = this.pickRepresentativeUris(snapshotUris, 8);
 
     const parts: any[] = [
       { text: promptText },
 
       { fileData: { mimeType: 'audio/mp3', fileUri: audioGcsUri } },
 
-      ...snapshotUris.map((uri) => ({
+      ...cappedSnapshots.map((uri) => ({
         fileData: { mimeType: 'image/jpeg', fileUri: uri },
       })),
     ];
@@ -146,17 +183,23 @@ export class GeminiAnalysisService {
         `Dispatching multimodal payload to Gemini. Max marks: A:${accuracyMax}`,
       );
 
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-3.5-flash',
+      const response = await geminiSemaphore.run(() =>
+        this.callWithRetry(() =>
+          this.ai.models.generateContent({
+            model: 'gemini-3.5-flash',
 
-        contents: [{ role: 'user', parts }],
+            contents: [{ role: 'user', parts }],
 
-        config: {
-          temperature: 0.1,
+            config: {
+              temperature: 0.1,
 
-          responseMimeType: 'application/json',
-        },
-      });
+              responseMimeType: 'application/json',
+
+              maxOutputTokens: 4096,
+            },
+          }),
+        ),
+      );
 
       const rawText = response.text;
 

@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
+import { geminiSemaphore } from '../common/concurrency';
 
 @Injectable()
 export class GeminiAiService {
@@ -12,6 +13,31 @@ export class GeminiAiService {
       project: 'gen-lang-client-0247762738',
       location: 'global',
     });
+  }
+
+  private async callWithRetry(
+    generateContent: () => Promise<any>,
+    attempts = 3,
+  ): Promise<any> {
+    const delays = [1000, 2000, 4000];
+    let lastError: any;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        return await generateContent();
+      } catch (error: any) {
+        lastError = error;
+        const retriable =
+          error?.status === 429 ||
+          error?.status === 500 ||
+          error?.status === 503 ||
+          error?.code === 429;
+        if (!retriable || attempt === attempts - 1) throw error;
+        await new Promise((resolve) =>
+          setTimeout(resolve, delays[attempt] || 1000),
+        );
+      }
+    }
+    throw lastError;
   }
 
   async generateMcqs(
@@ -208,11 +234,19 @@ Do not include markdown fences or explanations.`;
     }
 
     try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: [{ role: 'user', parts }],
-        config: { temperature: 0.1, responseMimeType: 'application/json' },
-      });
+      const response = await geminiSemaphore.run(() =>
+        this.callWithRetry(() =>
+          this.ai.models.generateContent({
+            model: 'gemini-3.5-flash',
+            contents: [{ role: 'user', parts }],
+            config: {
+              temperature: 0.1,
+              responseMimeType: 'application/json',
+              maxOutputTokens: 1024,
+            },
+          }),
+        ),
+      );
       const rawText = response.text?.trim() || '{}';
       const cleanedText = rawText
         .replace(/```json/gi, '')

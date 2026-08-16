@@ -8,6 +8,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 import * as fs from 'fs';
 import * as path from 'path';
+import { mediaSemaphore } from '../common/concurrency';
 
 @Injectable()
 export class MediaProcessorService implements OnModuleInit {
@@ -55,10 +56,12 @@ export class MediaProcessorService implements OnModuleInit {
 
     // 2 & 3. Split into two explicit, parallel processes to avoid flag bleeding
     try {
-      await Promise.all([
-        this.extractAudio(inputVideoPath, audioPath),
-        this.extractSnapshots(inputVideoPath, snapshotDir),
-      ]);
+      await mediaSemaphore.run(async () => {
+        await Promise.all([
+          this.extractAudio(inputVideoPath, audioPath),
+          this.extractSnapshots(inputVideoPath, snapshotDir),
+        ]);
+      });
 
       this.logger.log(`Extraction complete. Assets saved to: ${outputDir}`);
       return { audioPath, snapshotDir };
@@ -76,18 +79,27 @@ export class MediaProcessorService implements OnModuleInit {
    */
   private extractAudio(inputPath: string, outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      ffmpeg(inputPath)
+      const command = ffmpeg(inputPath)
         .output(outputPath)
         .noVideo() // Perfectly safe here, isolated instance
         .audioCodec('libmp3lame')
         .audioBitrate('128k')
         .audioFrequency(16000)
-        .on('end', () => resolve())
+        .on('end', () => {
+          clearTimeout(timeout);
+          resolve();
+        })
         .on('error', (err: any) => {
+          clearTimeout(timeout);
           this.logger.error(`Audio extraction error: ${err.message}`);
           reject(err);
-        })
-        .run();
+        });
+      const timeout = setTimeout(() => {
+        this.logger.error('Audio extraction timed out after 120s');
+        command.kill('SIGKILL');
+        reject(new Error('Audio extraction timed out after 120s'));
+      }, 120000);
+      command.run();
     });
   }
 
@@ -99,16 +111,25 @@ export class MediaProcessorService implements OnModuleInit {
     snapshotDir: string,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      ffmpeg(inputPath)
+      const command = ffmpeg(inputPath)
         .output(path.join(snapshotDir, 'snapshot_%03d.jpg'))
         .noAudio() // Strips audio to speed up frame processing
-        .videoFilters('fps=1/20')
-        .on('end', () => resolve())
+        .videoFilters('fps=1/60')
+        .on('end', () => {
+          clearTimeout(timeout);
+          resolve();
+        })
         .on('error', (err: any) => {
+          clearTimeout(timeout);
           this.logger.error(`Snapshot extraction error: ${err.message}`);
           reject(err);
-        })
-        .run();
+        });
+      const timeout = setTimeout(() => {
+        this.logger.error('Snapshot extraction timed out after 120s');
+        command.kill('SIGKILL');
+        reject(new Error('Snapshot extraction timed out after 120s'));
+      }, 120000);
+      command.run();
     });
   }
 }
