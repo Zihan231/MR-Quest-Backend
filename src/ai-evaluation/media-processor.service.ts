@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffprobePath = require('@ffprobe-installer/ffprobe').path;
 import * as fs from 'fs';
 import * as path from 'path';
 import { mediaSemaphore } from '../common/concurrency';
@@ -16,6 +17,7 @@ export class MediaProcessorService implements OnModuleInit {
 
   onModuleInit() {
     ffmpeg.setFfmpegPath(ffmpegPath);
+    ffmpeg.setFfprobePath(ffprobePath);
     ffmpeg.getAvailableFormats((err: any) => {
       if (err) {
         this.logger.error(
@@ -27,6 +29,9 @@ export class MediaProcessorService implements OnModuleInit {
       }
     });
   }
+
+  private static readonly MAX_SNAPSHOTS = 8;
+  private static readonly SNAPSHOT_INTERVAL_SEC = 60;
 
   async processVideoAssets(
     filename: string,
@@ -54,7 +59,6 @@ export class MediaProcessorService implements OnModuleInit {
       `Starting parallel extraction for submission ID: ${submissionId}`,
     );
 
-    // 2 & 3. Split into two explicit, parallel processes to avoid flag bleeding
     try {
       await mediaSemaphore.run(async () => {
         await Promise.all([
@@ -72,6 +76,45 @@ export class MediaProcessorService implements OnModuleInit {
       );
       throw new InternalServerErrorException('Failed to process video assets');
     }
+  }
+
+  private probeDuration(inputPath: string): Promise<number> {
+    return new Promise((resolve) => {
+      try {
+        ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
+          if (err) {
+            this.logger.warn(
+              `ffprobe failed for ${inputPath}: ${err?.message}`,
+            );
+            resolve(0);
+            return;
+          }
+          const duration = Number(
+            metadata?.format?.duration || metadata?.streams?.[0]?.duration || 0,
+          );
+          resolve(Number.isFinite(duration) && duration > 0 ? duration : 0);
+        });
+      } catch (err) {
+        this.logger.warn(`ffprobe threw for ${inputPath}: ${err}`);
+        resolve(0);
+      }
+    });
+  }
+
+  private buildSnapshotTimes(duration: number): number[] {
+    const times: number[] = [0];
+    if (duration > 0) {
+      times.push(duration * 0.5);
+      const interval = MediaProcessorService.SNAPSHOT_INTERVAL_SEC;
+      for (let t = interval; t < duration; t += interval) {
+        times.push(t);
+        if (times.length >= MediaProcessorService.MAX_SNAPSHOTS) break;
+      }
+    }
+    const unique = Array.from(new Set(times.map((t) => Math.round(t)))).sort(
+      (a, b) => a - b,
+    );
+    return unique.slice(0, MediaProcessorService.MAX_SNAPSHOTS);
   }
 
   /**
@@ -104,30 +147,56 @@ export class MediaProcessorService implements OnModuleInit {
   }
 
   /**
-   * Dedicated process exclusively for grabbing video frames
+   * Fast seek-and-capture snapshot extraction: each snapshot decodes only a
+   * few frames near its target timestamp instead of the entire video.
    */
-  private extractSnapshots(
+  private async extractSnapshots(
     inputPath: string,
     snapshotDir: string,
   ): Promise<void> {
+    const duration = await this.probeDuration(inputPath);
+    const times = this.buildSnapshotTimes(duration);
+
+    for (let i = 0; i < times.length; i++) {
+      const seekSec = times[i];
+      const snapshotPath = path.join(
+        snapshotDir,
+        `snapshot_${String(i + 1).padStart(3, '0')}.jpg`,
+      );
+      await this.extractSnapshotAt(inputPath, snapshotPath, seekSec);
+    }
+
+    this.logger.log(
+      `Extracted ${times.length} snapshots into ${snapshotDir} (duration ${duration}s)`,
+    );
+  }
+
+  private extractSnapshotAt(
+    inputPath: string,
+    snapshotPath: string,
+    seekSec: number,
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const command = ffmpeg(inputPath)
-        .output(path.join(snapshotDir, 'snapshot_%03d.jpg'))
-        .noAudio() // Strips audio to speed up frame processing
-        .videoFilters('fps=1/60')
+        .seekInput(seekSec)
+        .outputOptions('-frames:v 1')
+        .videoFilters('scale=-2:360')
+        .output(snapshotPath)
         .on('end', () => {
           clearTimeout(timeout);
           resolve();
         })
         .on('error', (err: any) => {
           clearTimeout(timeout);
-          this.logger.error(`Snapshot extraction error: ${err.message}`);
+          this.logger.error(
+            `Snapshot extraction error at ${seekSec}s: ${err.message}`,
+          );
           reject(err);
         });
       const timeout = setTimeout(() => {
-        this.logger.error('Snapshot extraction timed out after 120s');
+        this.logger.error(`Snapshot extraction timed out at ${seekSec}s`);
         command.kill('SIGKILL');
-        reject(new Error('Snapshot extraction timed out after 120s'));
+        reject(new Error(`Snapshot extraction timed out at ${seekSec}s`));
       }, 120000);
       command.run();
     });
