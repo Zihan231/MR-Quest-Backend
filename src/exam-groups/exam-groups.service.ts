@@ -277,7 +277,8 @@ export class ExamGroupsService {
           questions: { id: true },
         },
         order: {
-          startTime: 'DESC',
+          createdAt: 'DESC',
+          id: 'DESC',
         },
       }),
       this.examGroupRepo.count({ where }),
