@@ -294,6 +294,22 @@ export class ExamGroupsController {
     return this.examGroupsService.getAllSubmissions(+id);
   }
 
+  @Get(':id/submissions/:submissionId')
+  @UseGuards(JwtAuthGuard)
+  async getSubmission(
+    @Param('id') id: string,
+    @Param('submissionId') submissionId: string,
+    @Req() req: any,
+  ) {
+    const { role } = req.user;
+    if (role !== 'admin' && role !== 'employee') {
+      throw new ForbiddenException(
+        'Only admin and employee users can view student submissions',
+      );
+    }
+    return this.examGroupsService.getSubmissionById(+id, +submissionId);
+  }
+
   @Get(':id/remaining')
   @UseGuards(JwtAuthGuard)
   async getRemaining(@Param('id') id: string, @Req() req: any) {

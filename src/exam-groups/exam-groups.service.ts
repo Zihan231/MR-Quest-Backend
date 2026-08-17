@@ -1281,6 +1281,24 @@ export class ExamGroupsService {
     });
   }
 
+  async getSubmissionById(
+    examGroupId: number,
+    submissionId: number,
+  ): Promise<ExamGroupSubmission> {
+    const submission = await this.submissionRepo.findOne({
+      where: { id: submissionId, examGroup: { id: examGroupId } },
+      relations: {
+        user: true,
+        examGroup: true,
+        answers: { question: true },
+      },
+    });
+    if (!submission) {
+      throw new NotFoundException('Submission not found in this exam group');
+    }
+    return submission;
+  }
+
   async getRemainingCount(examGroupId: number): Promise<{
     remaining: number;
     totalEnrolled: number;

@@ -597,11 +597,11 @@ export class AuthService {
     };
   }
 
-  private getPerformanceLevel(avgScore: number): string | null {
+  private getPerformanceLevel(avgScore: number): string {
     if (avgScore >= 80) return 'good';
     if (avgScore >= 60) return 'average';
     if (avgScore >= 40) return 'below-average';
-    return null;
+    return 'poor';
   }
 
   private computeWeaknessAnalysis(submissions: ExamGroupSubmission[]) {
@@ -779,7 +779,7 @@ export class AuthService {
       if (maxAvg !== undefined && overall.avgScore > maxAvg) continue;
       if (
         performanceLevel &&
-        this.getPerformanceLevel(overall.avgScore) !== performanceLevel
+        overall.performanceLevel !== performanceLevel
       )
         continue;
       if (examGroupId && !records.some((r) => r.examGroupId === examGroupId))
