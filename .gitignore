@@ -60,3 +60,9 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .kilo/plans/1784972000947-exam-groups-plan.md
 Previous chat.md
+
+# Uploaded media
+/uploads
+/test/uploads
+
+src.zip
