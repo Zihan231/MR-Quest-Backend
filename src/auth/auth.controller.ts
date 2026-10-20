@@ -54,7 +54,9 @@ export class AuthController {
       sameSite: 'none',
       maxAge: 3600 * 1000, // 1 hour
     });
-    return user;
+    // Also return the token so clients that block third-party cookies
+    // (Safari/mobile Chrome) can send it as an Authorization: Bearer header.
+    return { ...user, token };
   }
 
   @Post('logout')
